@@ -1,0 +1,17 @@
+.venv/
+.env
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+.idea/
+
+# Local credentials and build artifacts
+.env.*
+!.env.example
+.DS_Store
+*.pem
+*.key
+dist/
+build/
+*.egg-info/

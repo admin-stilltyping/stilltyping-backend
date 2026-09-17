@@ -1,0 +1,75 @@
+name: context-agent
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: agent
+      POSTGRES_DB: agent
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent -d agent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  qdrant:
+    image: qdrant/qdrant:v1.19.0
+    restart: unless-stopped
+    ports: ["127.0.0.1:6333:6333"]
+    volumes: ["qdrant_data:/qdrant/storage"]
+  pgadmin:
+    image: dpage/pgadmin4:9.17
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-agent-local-admin}
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports: ["127.0.0.1:5050:80"]
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+  agent:
+    build: .
+    restart: "on-failure:3"
+    init: true
+    environment:
+      DATABASE_URL: postgresql+asyncpg://agent:agent@postgres:5432/agent
+      QDRANT_URL: http://qdrant:6333
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?Set GEMINI_API_KEY in .env before starting}
+      CHAT_MODEL: ${CHAT_MODEL:-gemini-3.5-flash}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-gemini-embedding-2}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-3072}
+      CANDIDATE_LIMIT: ${CANDIDATE_LIMIT:-30}
+      KNOWLEDGE_LIMIT: ${KNOWLEDGE_LIMIT:-4}
+      TOOL_LIMIT: ${TOOL_LIMIT:-5}
+      MAX_TOOL_ROUNDS: ${MAX_TOOL_ROUNDS:-2}
+      RELEVANCE_THRESHOLD: ${RELEVANCE_THRESHOLD:-0.60}
+      INDEX_PREFIX: ${INDEX_PREFIX:-agent_gemini_embedding_2_3072}
+      SUPPORT_WEBHOOK_URL: ${SUPPORT_WEBHOOK_URL:-}
+      SUPPORT_WEBHOOK_TOKEN: ${SUPPORT_WEBHOOK_TOKEN:-}
+      SUPER_ADMIN_JWT_SECRET: ${SUPER_ADMIN_JWT_SECRET:-}
+      SUPER_ADMIN_TOKEN_MINUTES: ${SUPER_ADMIN_TOKEN_MINUTES:-60}
+      SUPER_ADMIN_LOGIN_MAX_ATTEMPTS: ${SUPER_ADMIN_LOGIN_MAX_ATTEMPTS:-5}
+      SUPER_ADMIN_LOGIN_LOCK_SECONDS: ${SUPER_ADMIN_LOGIN_LOCK_SECONDS:-900}
+      LANGSMITH_TRACING: "false"
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      start_period: 120s
+      retries: 6
+volumes:
+  postgres_data:
+  qdrant_data:
+  pgadmin_data:

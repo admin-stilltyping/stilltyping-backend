@@ -1,0 +1,1 @@
+"""Business-owned product catalog."""
