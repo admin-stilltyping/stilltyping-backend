@@ -61,6 +61,11 @@ async def login(client, business, **changes):
 async def owner_headers(client, business):
     response = await login(client, business)
     assert response.status_code == 200, response.text
+    assert response.json()["expires_in"] == 172800
+    claims = jwt.decode(
+        response.json()["access_token"], SECRET, algorithms=["HS256"], audience="business-admin"
+    )
+    assert claims["exp"] - claims["iat"] == 172800
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 

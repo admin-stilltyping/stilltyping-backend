@@ -52,10 +52,10 @@ async def test_login_matches_frontend_contract_and_me_checks_token(client, accou
     assert response.status_code == 200
     data = response.json()
     assert set(data) == {"access_token", "token_type", "expires_in"}
-    assert data["token_type"] == "bearer" and data["expires_in"] == 3600
+    assert data["token_type"] == "bearer" and data["expires_in"] == 172800
     claims = jwt.decode(data["access_token"], SECRET, algorithms=["HS256"], audience=AUDIENCE)
     assert claims["sub"] == str(account.id) and claims["role"] == "super_admin"
-    assert claims["exp"] - claims["iat"] == 3600
+    assert claims["exp"] - claims["iat"] == 172800
     assert response.headers["cache-control"] == "no-store"
     assert PASSWORD not in response.text
     profile = await client.get(ME, headers={"Authorization": f"Bearer {data['access_token']}"})

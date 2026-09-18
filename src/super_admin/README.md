@@ -53,7 +53,7 @@ belong in the frontend or in a `VITE_` variable. Leave any existing `.env` setti
 in place. The other settings are optional:
 
 ```dotenv
-SUPER_ADMIN_TOKEN_MINUTES=60
+SUPER_ADMIN_TOKEN_MINUTES=2880
 SUPER_ADMIN_LOGIN_MAX_ATTEMPTS=5
 SUPER_ADMIN_LOGIN_LOCK_SECONDS=900
 ```
@@ -112,8 +112,11 @@ immediately invalidating its old tokens at protected backend routes. Disabling
 `super_admins.is_active` also prevents login and rejects existing tokens. A reset
 does not reactivate a disabled account.
 
-Tokens expire after 60 minutes by default. There is no refresh-token route; sign in
-again after expiry. The current frontend logout clears its local token. It does not
+Business-admin and super-admin tokens expire 48 hours (2 days) after sign-in by default.
+`SUPER_ADMIN_TOKEN_MINUTES` can configure a duration from 1 to 2880 minutes. Changes
+apply to newly issued tokens; existing tokens keep their original expiry. There is
+no refresh-token route; sign in again after expiry. The current frontend logout
+clears its local token. It does not
 revoke a copied token at the server; reset the password to revoke all account tokens.
 Rotating the signing secret invalidates every super-admin and business-admin token.
 
