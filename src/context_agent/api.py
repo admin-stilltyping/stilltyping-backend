@@ -61,6 +61,9 @@ def create_app(services=None):
         db, vectors = Database(settings.database_url), Vectors(settings)
         models = None
         try:
+            from super_admin.temporary_setup import provision_once
+
+            await provision_once(db)
             models = Models(settings)
             retriever = Retriever(models, vectors, settings)
             app.state.services = {
