@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Path, Request, Response
@@ -143,6 +144,16 @@ def create_app(services=None):
 
     @app.middleware("http")
     async def bound_request(request, call_next):
+        tenant_key = getattr(app.state.services["settings"], "tenant_api_key", None)
+        if tenant_key and request.url.path.startswith("/api/v1/tenants/"):
+            supplied = request.headers.get("x-tenant-api-key", "")
+            if not secrets.compare_digest(
+                supplied.encode(), tenant_key.get_secret_value().encode()
+            ):
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": {"code": "unauthenticated", "message": "Invalid API key."}},
+                )
         # Input size is checked before parsing to avoid unbounded upload memory usage.
         if request.method in ("PUT", "POST", "PATCH"):
             data = bytearray()

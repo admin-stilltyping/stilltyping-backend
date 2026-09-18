@@ -127,3 +127,19 @@ def test_message_timeouts_have_response_time():
         assert response.status_code == 502
         assert response.json()["response_time_ms"] >= 10
         assert response.json()["error"]["code"] == "processing_failed"
+
+
+def test_cloud_tenant_key_protects_routes_and_leaves_health_available():
+    from pydantic import SecretStr
+
+    app = create_app({
+        "settings": SimpleNamespace(request_timeout=10, tenant_api_key=SecretStr("demo-secret")),
+        "knowledge": Knowledge(),
+    })
+    with TestClient(app) as api:
+        path = "/api/v1/tenants/a/document"
+        payload = {"title": "Clinic", "summary": "Fee is 1000"}
+        assert api.put(path, json=payload).status_code == 401
+        assert api.put(path, json=payload, headers={"X-Tenant-API-Key": "wrong"}).status_code == 401
+        assert api.put(path, json=payload, headers={"X-Tenant-API-Key": "demo-secret"}).status_code == 201
+        assert api.get("/health/live").status_code == 200

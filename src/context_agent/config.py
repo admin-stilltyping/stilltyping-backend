@@ -8,6 +8,7 @@ class Settings(SuperAdminSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     database_url: str = "postgresql+asyncpg://agent:agent@localhost:5432/agent"
     qdrant_url: str = "http://localhost:6333"
+    tenant_api_key: SecretStr | None = None
     qdrant_api_key: SecretStr | None = None
     gemini_api_key: SecretStr | None = None
     chat_model: str = "gemini-3.5-flash"

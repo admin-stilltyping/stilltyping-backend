@@ -1,5 +1,6 @@
 *
 !Dockerfile
+!Dockerfile.vercel
 !pyproject.toml
 !uv.lock
 !alembic.ini
