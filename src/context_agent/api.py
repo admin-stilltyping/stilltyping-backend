@@ -268,6 +268,7 @@ def create_app(services=None):
             data = support.as_dict(row)
         return data
 
+    @app.put("/admin/{tenant_id}/instructions", dependencies=[Depends(require_support_owner)])
     @app.put("/api/v1/tenants/{tenant_id}/instructions")
     async def put_instructions(
         payload: InstructionsInput, request: Request, tenant_id: str = tenant_path
@@ -277,6 +278,7 @@ def create_app(services=None):
             await instructions.set_instructions(session, tenant, payload.instructions)
         return {"tenant_id": tenant, "length": len(payload.instructions)}
 
+    @app.get("/admin/{tenant_id}/instructions", dependencies=[Depends(require_support_owner)])
     @app.get("/api/v1/tenants/{tenant_id}/instructions")
     async def read_instructions(request: Request, tenant_id: str = tenant_path):
         tenant = scope(tenant_id)
