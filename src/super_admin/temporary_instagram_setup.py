@@ -19,7 +19,7 @@ BUSINESS_ID = UUID("4c5d16c3-0876-4dc2-956f-f06684445cb9")
 BUSINESS_SLUG = "dental"
 ACCOUNT_ID = "17841427926855776"
 TOKEN_SHA256 = "e9476bb50334cd8ac76e0231ce81c7998253b130791b98fd2f43516eda91ba28"
-EXPIRES_AT = datetime.fromisoformat("2026-09-18T12:30:00+00:00")
+EXPIRES_AT = datetime.fromisoformat("2026-09-18T15:00:00+00:00")
 router = APIRouter(prefix="/super-admin/setup", dependencies=[Depends(require_super_admin)])
 
 
