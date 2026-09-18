@@ -24,9 +24,7 @@ async def get_or_create(session, tenant: str, channel: str, external_id: str) ->
         )
     )
     if row is None:
-        row = Conversation(
-            id=uuid4(), tenant_id=tenant, channel=channel, external_id=external_id
-        )
+        row = Conversation(id=uuid4(), tenant_id=tenant, channel=channel, external_id=external_id)
         session.add(row)
         await session.flush()
     return row.id
@@ -54,7 +52,13 @@ async def load_history(session, tenant: str, conversation_id: UUID, limit: int) 
 
 
 async def record_message(
-    session, tenant: str, conversation_id: UUID, role: str, content: str
+    session,
+    tenant: str,
+    conversation_id: UUID,
+    role: str,
+    content: str,
+    *,
+    message_id: UUID | None = None,
 ) -> None:
     next_seq = await session.scalar(
         select(func.coalesce(func.max(Message.seq), 0) + 1).where(
@@ -63,7 +67,7 @@ async def record_message(
     )
     session.add(
         Message(
-            id=uuid4(),
+            id=message_id or uuid4(),
             tenant_id=tenant,
             conversation_id=conversation_id,
             seq=next_seq,

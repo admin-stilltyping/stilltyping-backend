@@ -219,8 +219,11 @@ class Agent:
             outcome = "escalation_failed"
         return {"results": results, "answer": answer, "outcome": outcome}
 
-    async def run(self, tenant, request, *, persist_response=None):
-        await capture_incoming(self.db, tenant, request)
+    async def run(
+        self, tenant, request, *, persist_response=None, capture_enquiry=True, message_ids=None
+    ):
+        if capture_enquiry:
+            await capture_incoming(self.db, tenant, request)
         # A conversation is opened only when the caller identifies the user; otherwise the
         # request stays stateless, exactly as before. History is loaded before the turn runs
         # so the model sees prior turns plus the new message once. The user + assistant
@@ -233,9 +236,7 @@ class Agent:
                 conversation_id = await conversations.get_or_create(
                     session, tenant, request.channel, request.external_user_id
                 )
-                history = await conversations.load_history(
-                    session, tenant, conversation_id, limit
-                )
+                history = await conversations.load_history(session, tenant, conversation_id, limit)
         state = await self.graph.ainvoke(
             {"tenant": tenant, "request": request, "history": history},
             config={"recursion_limit": 40},
@@ -251,10 +252,20 @@ class Agent:
         if conversation_id is not None:
             async with self.db.transaction(tenant) as session:
                 await conversations.record_message(
-                    session, tenant, conversation_id, "user", request.message
+                    session,
+                    tenant,
+                    conversation_id,
+                    "user",
+                    request.message,
+                    message_id=message_ids[0] if message_ids else None,
                 )
                 await conversations.record_message(
-                    session, tenant, conversation_id, "assistant", state["answer"]
+                    session,
+                    tenant,
+                    conversation_id,
+                    "assistant",
+                    state["answer"],
+                    message_id=message_ids[1] if message_ids else None,
                 )
                 if persist_response is not None:
                     await persist_response(session, result)
