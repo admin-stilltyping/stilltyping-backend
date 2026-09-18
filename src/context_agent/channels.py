@@ -9,11 +9,8 @@ credentials are read from the tenant's ChannelAccount.config.
 import hashlib
 import hmac
 import json
-import logging
 
 import httpx
-
-log = logging.getLogger(__name__)
 
 META_GRAPH = "https://graph.facebook.com"
 INSTAGRAM_GRAPH = "https://graph.instagram.com"
@@ -22,14 +19,23 @@ GRAPH_VERSION = "v21.0"
 
 
 class Inbound:
-    """One normalized inbound text message."""
+    """One normalized inbound message; non-text messages carry an ignored reason."""
 
-    __slots__ = ("external_user_id", "text", "message_id")
+    __slots__ = ("external_user_id", "text", "message_id", "ignored_reason")
 
-    def __init__(self, external_user_id: str, text: str, message_id: str):
+    def __init__(self, external_user_id: str, text: str, message_id: str, ignored_reason=None):
         self.external_user_id = external_user_id
         self.text = text
         self.message_id = message_id
+        self.ignored_reason = ignored_reason
+
+
+class ChannelNotConfigured(Exception):
+    """A send cannot succeed without the channel credentials."""
+
+
+def _id(value):
+    return str(value) if value is not None else ""
 
 
 def _loads(raw: bytes) -> dict:
@@ -55,9 +61,11 @@ def _meta_challenge(params: dict, config: dict) -> str | None:
     # Require a configured verify token: an absent stored token must never match an
     # absent request token (None == None) and echo an attacker-supplied challenge.
     expected = config.get("verify_token")
-    if expected and params.get("hub.mode") == "subscribe" and params.get(
-        "hub.verify_token"
-    ) == expected:
+    if (
+        expected
+        and params.get("hub.mode") == "subscribe"
+        and params.get("hub.verify_token") == expected
+    ):
         return params.get("hub.challenge")
     return None
 
@@ -81,17 +89,21 @@ class WhatsAppAdapter:
         return _verify_meta(config, raw, headers.get("x-hub-signature-256"))
 
     def parse(self, raw: bytes) -> list[Inbound]:
+        return [message for message in self.events(raw) if not message.ignored_reason]
+
+    def events(self, raw: bytes) -> list[Inbound]:
         out: list[Inbound] = []
         for entry in _loads(raw).get("entry", []):
             for change in entry.get("changes", []):
                 for m in change.get("value", {}).get("messages", []):
-                    if m.get("type") != "text":
-                        continue  # ignore media/status callbacks in this first version
                     out.append(
                         Inbound(
-                            external_user_id=str(m.get("from", "")),
+                            external_user_id=_id(m.get("from")),
                             text=m.get("text", {}).get("body", ""),
-                            message_id=str(m.get("id", "")),
+                            message_id=_id(m.get("id")),
+                            ignored_reason="unsupported_message"
+                            if m.get("type") != "text"
+                            else None,
                         )
                     )
         return out
@@ -100,8 +112,7 @@ class WhatsAppAdapter:
         phone_id = config.get("phone_number_id")
         token = config.get("access_token")
         if not phone_id or not token:
-            log.warning("whatsapp_send_skipped: missing phone_number_id or access_token")
-            return
+            raise ChannelNotConfigured()
         version = config.get("graph_version", GRAPH_VERSION)
         async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
             response = await client.post(
@@ -135,18 +146,22 @@ class InstagramAdapter:
         return _verify_meta(config, raw, headers.get("x-hub-signature-256"))
 
     def parse(self, raw: bytes) -> list[Inbound]:
+        return [message for message in self.events(raw) if not message.ignored_reason]
+
+    def events(self, raw: bytes) -> list[Inbound]:
         out: list[Inbound] = []
         for entry in _loads(raw).get("entry", []):
             for m in entry.get("messaging", []):
                 message = m.get("message", {})
                 text = message.get("text")
-                if not text or message.get("is_echo"):
+                if not message or message.get("is_echo"):
                     continue
                 out.append(
                     Inbound(
-                        external_user_id=str(m.get("sender", {}).get("id", "")),
-                        text=text,
-                        message_id=str(message.get("mid", "")),
+                        external_user_id=_id(m.get("sender", {}).get("id")),
+                        text=text or "",
+                        message_id=_id(message.get("mid")),
+                        ignored_reason="unsupported_message" if not text else None,
                     )
                 )
         return out
@@ -155,8 +170,7 @@ class InstagramAdapter:
         account_id = config.get("account_id")
         token = config.get("access_token")
         if not account_id or not token:
-            log.warning("instagram_send_skipped: missing account_id or access_token")
-            return
+            raise ChannelNotConfigured()
         version = config.get("graph_version", GRAPH_VERSION)
         async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
             response = await client.post(
@@ -186,23 +200,26 @@ class TelegramAdapter:
         return bool(secret) and hmac.compare_digest(secret, provided)
 
     def parse(self, raw: bytes) -> list[Inbound]:
+        return [message for message in self.events(raw) if not message.ignored_reason]
+
+    def events(self, raw: bytes) -> list[Inbound]:
         message = _loads(raw).get("message") or {}
         text = message.get("text")
-        if not text:
+        if not message:
             return []
         return [
             Inbound(
-                external_user_id=str(message.get("chat", {}).get("id", "")),
-                text=text,
-                message_id=str(message.get("message_id", "")),
+                external_user_id=_id(message.get("chat", {}).get("id")),
+                text=text or "",
+                message_id=_id(message.get("message_id")),
+                ignored_reason="unsupported_message" if not text else None,
             )
         ]
 
     async def send(self, config: dict, to: str, text: str) -> None:
         token = config.get("bot_token")
         if not token:
-            log.warning("telegram_send_skipped: missing bot_token")
-            return
+            raise ChannelNotConfigured()
         async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
             response = await client.post(
                 f"{TELEGRAM_API}/bot{token}/sendMessage",

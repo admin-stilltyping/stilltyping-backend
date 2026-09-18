@@ -162,8 +162,21 @@ class WebhookEvent(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     channel: Mapped[str] = mapped_column(String(20))
     event_id: Mapped[str] = mapped_column(String(200))
+    # Old dedup-only rows have no owner and are deliberately excluded from the portal.
+    tenant_id: Mapped[str | None] = mapped_column(String(200))
+    external_event_id: Mapped[str | None] = mapped_column(String(512))
+    status: Mapped[str] = mapped_column(String(20), default="legacy", server_default="legacy")
+    deliveries: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    last_received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_ms: Mapped[float | None] = mapped_column(Float)
+    error_code: Mapped[str | None] = mapped_column(String(50))
+    request_id: Mapped[UUID | None] = mapped_column(Uuid)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    __table_args__ = (UniqueConstraint("channel", "event_id"),)
+    __table_args__ = (
+        UniqueConstraint("channel", "event_id"),
+        Index("ix_webhook_events_tenant_created", "tenant_id", "created_at", "id"),
+    )
 
 
 class SupportTicket(TimestampMixin, Base):

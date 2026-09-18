@@ -262,3 +262,27 @@ starts at deployment; historic replies cannot be backfilled with accurate token 
 A telemetry persistence failure logs `ai_usage_save_failed` or
 `ai_usage_delivery_save_failed` without logging messages or credentials and without
 forcing an already completed answer to be regenerated.
+
+### Webhook Events portal
+
+`GET /admin/{slug}/webhook-events` requires the owning business JWT. It supports
+`source` (`instagram`, `whatsapp`, `telegram`), `status`, inclusive `start` / `end`
+dates in the business timezone, and `limit` / `offset`. Responses include summary
+counts, pagination, timestamps, delivery counts, processing durations and safe
+failure explanations. They omit raw payloads, message text, sender identities and
+channel credentials.
+
+Migration 015 extends existing webhook claims without deleting them. New verified
+message arrivals are saved before HTTP acknowledgment and move through `received`,
+`processing`, and `processed` (send accepted) or `failed`. Non-text or invalid
+messages are `ignored`; echoes, read receipts and delivery receipts are excluded.
+Duplicate deliveries increment a count without re-running the agent or sending
+another reply. The deduplication key includes business, channel account and sender,
+since provider message IDs are not always globally unique. Both Instagram and
+WhatsApp batches are isolated by account before processing.
+
+Old claims have no business ownership and remain hidden; redelivery of an old
+message is logged as an ignored legacy duplicate. No historic ownership or outcome
+is inferred. Processing remains in the existing background-task mechanism: a worker
+interruption can leave an event at Received or Processing without a final outcome.
+This page does not automatically retry or manually replay messages.

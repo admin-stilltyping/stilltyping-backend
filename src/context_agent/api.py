@@ -35,6 +35,7 @@ from .db import Database
 from .knowledge import KnowledgeService
 from .models import Models
 from .portal_chat import router as portal_chat_router
+from .portal_webhooks import router as portal_webhooks_router
 from .retrieval import Retriever
 from .schemas import (
     AddInput,
@@ -99,6 +100,7 @@ def create_app(services=None):
     app.include_router(integrations_router)
     app.include_router(portal_chat_router)
     app.include_router(ai_usage_router)
+    app.include_router(portal_webhooks_router)
 
     @app.exception_handler(DomainError)
     async def domain_error(request, exc):
