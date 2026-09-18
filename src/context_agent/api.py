@@ -215,6 +215,11 @@ def create_app(services=None):
     async def message(payload: ChatInput, request: Request, tenant_id: str = tenant_path):
         return await request.app.state.services["agent"].run(scope(tenant_id), payload)
 
+    # Portal aliases use the same business-owner JWT checks as the legacy routes.
+    # Keep the /api/v1 tenant-key middleware unchanged for server integrations.
+    @app.get(
+        "/admin/{tenant_id}/support-tickets", dependencies=[Depends(require_support_owner)]
+    )
     @app.get(
         "/api/v1/tenants/{tenant_id}/support-tickets", dependencies=[Depends(require_support_owner)]
     )
@@ -227,6 +232,10 @@ def create_app(services=None):
         return {"tickets": [support.as_dict(row) for row in rows]}
 
     @app.get(
+        "/admin/{tenant_id}/support-tickets/{ticket_ref}",
+        dependencies=[Depends(require_support_owner)],
+    )
+    @app.get(
         "/api/v1/tenants/{tenant_id}/support-tickets/{ticket_ref}",
         dependencies=[Depends(require_support_owner)],
     )
@@ -238,6 +247,10 @@ def create_app(services=None):
             raise DomainError(404, "ticket_not_found", "No support ticket with that reference.")
         return support.as_dict(row)
 
+    @app.patch(
+        "/admin/{tenant_id}/support-tickets/{ticket_ref}",
+        dependencies=[Depends(require_support_owner)],
+    )
     @app.patch(
         "/api/v1/tenants/{tenant_id}/support-tickets/{ticket_ref}",
         dependencies=[Depends(require_support_owner)],

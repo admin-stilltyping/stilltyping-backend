@@ -239,7 +239,8 @@ async def test_service_fields_have_separate_access(modules):
     assert (await m.client.get(base + "/product", headers=m.a.headers)).status_code == 403
 
 
-async def test_support_without_customers_and_disabling_stops_creation_and_access(modules):
+@pytest.mark.parametrize("prefix", ["/api/v1/tenants", "/admin"])
+async def test_support_without_customers_and_disabling_stops_creation_and_access(modules, prefix):
     m = modules
     tenant = m.a.business.slug
     async with m.db.transaction(tenant) as session:
@@ -248,7 +249,7 @@ async def test_support_without_customers_and_disabling_stops_creation_and_access
         )
         ref = ticket.ticket_ref
         assert SUPPORT.name in await available_tools(session, tenant, [])
-    base = f"/api/v1/tenants/{tenant}/support-tickets"
+    base = f"{prefix}/{tenant}/support-tickets"
     assert (await m.client.get(base, headers=m.a.headers)).json()["tickets"][0]["ticket_ref"] == ref
     for method, url, body in [
         ("GET", base, None),
