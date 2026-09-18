@@ -13,6 +13,7 @@ from appointments.routes import router as appointments_router
 from crm.routes import router as crm_router
 from custom_fields.routes import router as custom_fields_router
 from dashboard.routes import router as dashboard_router
+from integrations.routes import router as integrations_router
 from knowledge_base.routes import router as knowledge_base_router
 from modules.dependencies import require_support_owner
 from modules.routes import management as module_management_router
@@ -93,6 +94,7 @@ def create_app(services=None):
     app.include_router(orders_router)
     app.include_router(appointments_router)
     app.include_router(public_chat_router)
+    app.include_router(integrations_router)
 
     @app.exception_handler(DomainError)
     async def domain_error(request, exc):

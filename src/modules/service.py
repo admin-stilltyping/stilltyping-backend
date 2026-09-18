@@ -81,4 +81,6 @@ def entitlement_flags(selection):
         "ui.agent_runs": True,
         "ui.webhook_events": True,
         "ui.dashboard_customize": True,
+        # Instagram setup is available to active business owners, like public web chat.
+        "channel.instagram": True,
     }

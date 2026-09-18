@@ -9,6 +9,7 @@ Flow per delivery:
      conversation loop as the API, and send the reply back on the same channel.
 """
 
+import json
 import logging
 from uuid import NAMESPACE_URL, uuid5
 
@@ -16,6 +17,8 @@ from fastapi import BackgroundTasks, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import ValidationError
 from sqlalchemy import select
+
+from super_admin.businesses.models import Business
 
 from .channels import ADAPTERS
 from .db import ChannelAccount, WebhookEvent
@@ -26,7 +29,9 @@ log = logging.getLogger(__name__)
 
 async def _accounts_for_channel(session, channel):
     return list(
-        (await session.scalars(select(ChannelAccount).where(ChannelAccount.channel == channel))).all()
+        (
+            await session.scalars(select(ChannelAccount).where(ChannelAccount.channel == channel))
+        ).all()
     )
 
 
@@ -113,6 +118,45 @@ def register_webhooks(app):
             return Response(status_code=404)
         raw = await request.body()
         services = request.app.state.services
+        if channel == "instagram":
+            # Meta may batch entries for different accounts in one signed delivery.
+            # Verify the ORIGINAL body for each account, then isolate its entry.
+            try:
+                body = json.loads(raw)
+                entries = body.get("entry", []) if isinstance(body, dict) else []
+                if not isinstance(entries, list):
+                    return Response(status_code=400)
+            except (ValueError, UnicodeError):
+                return Response(status_code=400)
+            deliveries = []
+            async with services["db"].transaction() as session:
+                for entry in entries:
+                    if not isinstance(entry, dict) or not entry.get("id"):
+                        continue
+                    account = await _lookup_account(session, channel, str(entry["id"]))
+                    if account is None:
+                        log.warning("webhook_unknown_account channel=%s", channel)
+                        continue
+                    if not adapter.verify(request.headers, raw, account.config):
+                        log.warning("webhook_signature_invalid channel=%s", channel)
+                        return Response(status_code=401)
+                    business = await session.scalar(
+                        select(Business).where(Business.slug == account.tenant_id)
+                    )
+                    if business is not None and business.status != "active":
+                        continue
+                    deliveries.append(
+                        (
+                            account.tenant_id,
+                            dict(account.config),
+                            json.dumps({**body, "entry": [entry]}).encode(),
+                        )
+                    )
+            for tenant, config, entry_raw in deliveries:
+                background_tasks.add_task(
+                    process_webhook, services, channel, tenant, config, entry_raw
+                )
+            return Response(status_code=200)
         key = adapter.routing_key(request.headers, raw)
         async with services["db"].transaction() as session:
             account = await _lookup_account(session, channel, key)

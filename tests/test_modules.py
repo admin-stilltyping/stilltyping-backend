@@ -91,6 +91,7 @@ async def test_new_business_defaults_and_owner_entitlements(modules):
     assert flags["support.tickets_enabled"] and not flags["module.customers"]
     assert not flags["module.products"] and not flags["orders.enabled"]
     assert not flags["module.custom_fields"]
+    assert flags["channel.instagram"]
     assert response.json()["business_id"] == str(m.a.business.id)
     assert (await m.client.get(url, headers=m.b.headers)).status_code == 403
     for headers in ({}, m.platform):
