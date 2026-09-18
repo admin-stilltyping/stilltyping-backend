@@ -23,6 +23,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from .performance import current_timing, instrument_engine, measure, measure_exit
+
 
 class Base(DeclarativeBase):
     pass
@@ -228,15 +230,26 @@ def content_hash(title: str, content: str) -> str:
 class Database:
     def __init__(self, url: str):
         self.engine = create_async_engine(url, pool_pre_ping=True)
+        instrument_engine(self.engine)
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
 
     @asynccontextmanager
     async def transaction(self, tenant: str | None = None):
-        async with self.sessions() as session, session.begin():
+        async with measure_exit(self.sessions()) as session, measure_exit(session.begin()):
+            if current_timing.get() is not None:
+                # Separate pool wait / pre-ping / new connection setup from SQL.
+                # Ordinary requests retain SQLAlchemy's lazy connection acquisition.
+                with measure("db_acquire"):
+                    await session.connection()
             if tenant is not None and self.engine.dialect.name == "postgresql":
                 # Serializes writes and consistent reads per tenant across service workers.
                 lock = int.from_bytes(hashlib.sha256(tenant.encode()).digest()[:8], signed=True)
-                await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock})
+                await session.execute(
+                    text("SELECT pg_advisory_xact_lock(:key)").execution_options(
+                        request_timing_kind="db_lock"
+                    ),
+                    {"key": lock},
+                )
             yield session
 
     async def close(self):

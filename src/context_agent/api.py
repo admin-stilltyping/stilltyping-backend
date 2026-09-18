@@ -34,6 +34,8 @@ from .config import Settings
 from .db import Database
 from .knowledge import KnowledgeService
 from .models import Models
+from .performance import PerformanceMiddleware
+from .performance_routes import router as performance_router
 from .portal_chat import router as portal_chat_router
 from .portal_webhooks import router as portal_webhooks_router
 from .retrieval import Retriever
@@ -101,6 +103,7 @@ def create_app(services=None):
     app.include_router(portal_chat_router)
     app.include_router(ai_usage_router)
     app.include_router(portal_webhooks_router)
+    app.include_router(performance_router)
 
     @app.exception_handler(DomainError)
     async def domain_error(request, exc):
@@ -312,6 +315,7 @@ def create_app(services=None):
     register_webhooks(app)
 
     app.add_middleware(UsageMiddleware)
+    app.add_middleware(PerformanceMiddleware)
     return app
 
 

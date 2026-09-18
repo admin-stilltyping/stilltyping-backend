@@ -86,4 +86,5 @@ async def require_business_admin(
             or business.slug != claims.get("business_slug")
         ):
             raise AuthError(401, "invalid_token", "Invalid or expired access token.")
+    request.state.performance_owner_verified = True
     return BusinessIdentity(account, business)
