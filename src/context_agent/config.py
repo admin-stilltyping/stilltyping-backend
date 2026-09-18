@@ -24,3 +24,5 @@ class Settings(SuperAdminSettings):
     request_timeout: float = Field(default=180, gt=0)
     support_webhook_url: str | None = None
     support_webhook_token: SecretStr | None = None
+    push_vapid_private_key: SecretStr | None = None
+    push_vapid_subject: str = ""

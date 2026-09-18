@@ -251,6 +251,11 @@ class Database:
                     {"key": lock},
                 )
             yield session
+        # Only a successfully committed notification wakes the delivery worker.
+        if session.info.get("notify_push"):
+            from .notifications import after_commit
+
+            after_commit(self)
 
     async def close(self):
         await self.engine.dispose()

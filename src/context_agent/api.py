@@ -34,6 +34,8 @@ from .config import Settings
 from .db import Database
 from .knowledge import KnowledgeService
 from .models import Models
+from .notification_routes import router as notification_router
+from .notifications import PushDeliveryMiddleware, push_worker
 from .performance import PerformanceMiddleware
 from .performance_routes import router as performance_router
 from .portal_chat import router as portal_chat_router
@@ -61,7 +63,8 @@ def create_app(services=None):
     async def lifespan(app):
         if services is not None:
             app.state.services = services
-            yield
+            async with push_worker(services.get("db"), services["settings"]):
+                yield
             return
         settings = Settings()
         db, vectors = Database(settings.database_url), Vectors(settings)
@@ -76,7 +79,8 @@ def create_app(services=None):
                 "knowledge": KnowledgeService(db, models, vectors, retriever),
                 "agent": Agent(db, models, retriever, settings),
             }
-            yield
+            async with push_worker(db, settings):
+                yield
         finally:
             if models is not None:
                 await models.close()
@@ -104,6 +108,7 @@ def create_app(services=None):
     app.include_router(ai_usage_router)
     app.include_router(portal_webhooks_router)
     app.include_router(performance_router)
+    app.include_router(notification_router)
 
     @app.exception_handler(DomainError)
     async def domain_error(request, exc):
@@ -316,6 +321,8 @@ def create_app(services=None):
 
     app.add_middleware(UsageMiddleware)
     app.add_middleware(PerformanceMiddleware)
+    # Outermost: dispatch only after every response wrapper has sent its final body.
+    app.add_middleware(PushDeliveryMiddleware)
     return app
 
 

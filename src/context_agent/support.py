@@ -13,6 +13,7 @@ from sqlalchemy import select
 from modules.service import support_enabled
 
 from .db import SupportTicket
+from .notifications import queue_support_notification
 from .schemas import DomainError
 
 
@@ -57,6 +58,7 @@ async def create_or_get(
         )
         session.add(row)
         await session.flush()
+        await queue_support_notification(session, tenant, row)
     return row
 
 

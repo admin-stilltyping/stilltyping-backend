@@ -39,3 +39,30 @@ Compare application `total` with Vercel's invocation duration and client elapsed
 time to locate time outside the application. A slow SQL driver call alone does
 not establish a slow PostgreSQL query; use the database-side EXPLAIN timings to
 distinguish query execution from transport/connection overhead.
+
+## Deferred performance work — 2026-09-19
+
+The business owner asked to keep these findings for later and prioritize push
+notifications. No performance optimization has been applied.
+
+- The Services page fetches custom-field definitions immediately, although they
+  are used only by the New Service form. Defer that request until the form opens.
+  Earlier production samples had a 3.16-second median for this request; this is
+  request duration, not guaranteed page-load savings.
+- Initial page loading waits for `/auth/me`, then entitlements, then page data.
+  The supplied browser sample spent 1.59 + 2.85 = 4.44 seconds on those first two
+  requests. Consider a combined bootstrap response while preserving server-side
+  account, tenant, and module authorization.
+- Tenant transactions take an exclusive PostgreSQL advisory lock even for
+  read-only list requests. Review read concurrency separately from mutations;
+  preserve write ordering and module-disable consistency guarantees.
+- Authentication re-reads the account and business for every request. The
+  Services path performs five SELECTs across two transactions, plus its advisory
+  lock. Measure connection/transport costs before choosing joins or caching.
+- Direct-vs-portal samples showed about 0–40 ms difference, so the frontend proxy
+  was not the main contributor in those samples.
+
+The query execution / connection / transport / application split was not yet
+measured in production: diagnostic deployment `7639025` failed internally in
+Vercel, and its replacement was queued at the last check. Do not treat total API
+duration as PostgreSQL execution time or assume the database region is known.

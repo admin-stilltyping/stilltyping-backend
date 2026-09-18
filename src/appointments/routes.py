@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Query, Request
 from sqlalchemy import func, select
 
+from context_agent.notifications import queue_notification
 from context_agent.schemas import DomainError
 from crm.service import fingerprint, owned, retry_result, transaction_customer
 from custom_fields.service import Owner
@@ -96,6 +97,9 @@ async def create(payload: AppointmentCreate, identity: Owner, request: Request):
         session.add(row)
         await session.flush()
         await session.refresh(row)
+        await queue_notification(
+            session, identity.business.id, "appointment", row.id, f"/appointments/{row.id}"
+        )
         return row
 
 

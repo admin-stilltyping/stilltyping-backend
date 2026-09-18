@@ -5,6 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from appointments import models as appointment_models  # noqa: F401
+from context_agent import notification_models  # noqa: F401
 from context_agent.config import Settings
 from context_agent.db import Base
 from crm import models as crm_models  # noqa: F401
