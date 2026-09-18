@@ -25,6 +25,7 @@ from super_admin.businesses.routes import management as business_management_rout
 from super_admin.businesses.routes import portal as business_portal_router
 from super_admin.errors import AuthError, auth_error_response
 from super_admin.routes import router as super_admin_router
+from super_admin.temporary_instagram_setup import router as temporary_instagram_router
 
 from . import instructions, support
 from .agent import Agent
@@ -80,6 +81,7 @@ def create_app(services=None):
     app = FastAPI(title="Context Agent", version="0.1.0", lifespan=lifespan)
     app.add_exception_handler(AuthError, auth_error_response)
     app.include_router(super_admin_router)
+    app.include_router(temporary_instagram_router)
     app.include_router(business_management_router)
     app.include_router(business_portal_router)
     app.include_router(dashboard_router)
