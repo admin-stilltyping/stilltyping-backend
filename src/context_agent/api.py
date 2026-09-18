@@ -29,6 +29,7 @@ from super_admin.routes import router as super_admin_router
 
 from . import instructions, support
 from .agent import Agent
+from .ai_usage import router as ai_usage_router
 from .config import Settings
 from .db import Database
 from .knowledge import KnowledgeService
@@ -97,6 +98,7 @@ def create_app(services=None):
     app.include_router(public_chat_router)
     app.include_router(integrations_router)
     app.include_router(portal_chat_router)
+    app.include_router(ai_usage_router)
 
     @app.exception_handler(DomainError)
     async def domain_error(request, exc):

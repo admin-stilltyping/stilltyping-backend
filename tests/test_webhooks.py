@@ -82,7 +82,7 @@ class FakeAgent:
     def __init__(self):
         self.calls = []
 
-    async def run(self, tenant, request):
+    async def run(self, tenant, request, **kwargs):
         self.calls.append((tenant, request))
         return {
             "request_id": request.request_id,

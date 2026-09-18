@@ -1,6 +1,7 @@
 import asyncio
 
 from alembic import context
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from appointments import models as appointment_models  # noqa: F401
@@ -21,6 +22,9 @@ from super_admin.businesses import models as business_models  # noqa: F401 - reg
 def configure(connection):
     context.configure(connection=connection, target_metadata=Base.metadata)
     with context.begin_transaction():
+        if connection.dialect.name == "postgresql":
+            # Serialize startup migrations across concurrently starting containers.
+            connection.execute(text("SELECT pg_advisory_xact_lock(784330149221)"))
         context.run_migrations()
 
 

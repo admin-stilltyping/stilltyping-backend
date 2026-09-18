@@ -238,3 +238,27 @@ Chat responses also include `knowledge_units`: the exact ordered knowledge conte
 ## Customer website chat
 
 Public customer chat and a website widget are available through the frontend at `/c/{business-slug}`. The business portal’s **Integrations → Web Chat** section provides the link and embed script. Visitor sessions, message history and conditional lead capture are handled by [`src/public_chat`](src/public_chat/README.md).
+
+### Per-reply AI usage
+
+Business owners can read `GET /admin/{slug}/ai-usage` with their business JWT.
+`start` and `end` are inclusive calendar dates in the business timezone; omitted dates
+select this month through today. Optional `channel`, `offset`, and `limit` filter and
+page the newest replies. Admin Agent Chat uses `admin_chat`; messaging integrations
+use `instagram`, `whatsapp`, and `telegram`; visitor chat uses `web`.
+
+Migration 014 adds `ai_usage_records`. Vercel container startup runs `alembic upgrade
+head` before serving traffic, serialized with a PostgreSQL transaction advisory lock.
+This only applies database migrations; it does not rebuild embeddings. Other deployment
+methods must also apply migrations before running the new code.
+
+Each actual agent invocation records the sum of provider-reported input/output tokens
+across its model calls. Cached replies and duplicate webhook deliveries create no new
+usage. Retries that invoke the agent again have separate records. Token counts exclude
+embedding requests; incomplete provider metadata is flagged rather than estimated.
+Duration includes agent processing and, for webhooks, the outbound send request (not
+recipient delivery). Failed generations and failed sends are distinguished. Usage
+starts at deployment; historic replies cannot be backfilled with accurate token counts.
+A telemetry persistence failure logs `ai_usage_save_failed` or
+`ai_usage_delivery_save_failed` without logging messages or credentials and without
+forcing an already completed answer to be regenerated.

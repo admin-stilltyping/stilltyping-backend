@@ -11,6 +11,8 @@ Flow per delivery:
 
 import json
 import logging
+from datetime import UTC, datetime
+from time import perf_counter
 from uuid import NAMESPACE_URL, uuid5
 
 from fastapi import BackgroundTasks, Request, Response
@@ -21,7 +23,7 @@ from sqlalchemy import select
 from super_admin.businesses.models import Business
 
 from .channels import ADAPTERS
-from .db import ChannelAccount, WebhookEvent
+from .db import AiUsageRecord, ChannelAccount, WebhookEvent
 from .schemas import ChatInput
 
 log = logging.getLogger(__name__)
@@ -82,14 +84,33 @@ async def process_webhook(services, channel: str, tenant: str, config: dict, raw
             log.warning("webhook_invalid_message channel=%s", channel)
             continue
         try:
-            result = await agent.run(tenant, payload)
+            started = perf_counter()
+            result = await agent.run(tenant, payload, await_delivery=True)
         except Exception:
             log.exception("webhook_agent_failed channel=%s tenant=%s", channel, tenant)
             continue
+        sent = False
         try:
             await adapter.send(config, message.external_user_id, result["answer"])
+            sent = True
         except Exception:
             log.exception("webhook_send_failed channel=%s tenant=%s", channel, tenant)
+        await finish_delivery(db, tenant, result.get("usage_id"), started, sent)
+
+
+async def finish_delivery(db, tenant, usage_id, started, sent):
+    if usage_id is None:
+        return
+    try:
+        async with db.transaction() as session:
+            row = await session.get(AiUsageRecord, usage_id)
+            if row is not None and row.tenant_id == tenant:
+                if row.status == "awaiting_send":
+                    row.status = "completed" if sent else "send_failed"
+                row.completed_at = datetime.now(UTC)
+                row.duration_ms = round((perf_counter() - started) * 1000, 2)
+    except Exception as exc:
+        log.error("ai_usage_delivery_save_failed tenant=%s error=%s", tenant, type(exc).__name__)
 
 
 def register_webhooks(app):

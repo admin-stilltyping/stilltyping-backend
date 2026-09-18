@@ -1,6 +1,9 @@
 import json
 import logging
+from datetime import UTC, datetime
+from time import perf_counter
 from typing import TypedDict
+from uuid import uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
@@ -8,9 +11,11 @@ from langgraph.graph import END, START, StateGraph
 from crm.service import capture_incoming
 
 from . import conversations, instructions
+from .db import AiUsageRecord
 from .models import processing_error
 from .schemas import DomainError
 from .tools import SUPPORT, ToolContext, available_tools, execute
+from .usage import TokenUsage, current_usage
 
 log = logging.getLogger(__name__)
 
@@ -220,6 +225,75 @@ class Agent:
         return {"results": results, "answer": answer, "outcome": outcome}
 
     async def run(
+        self,
+        tenant,
+        request,
+        *,
+        persist_response=None,
+        capture_enquiry=True,
+        message_ids=None,
+        await_delivery=False,
+    ):
+        # All channels share this boundary. Cached replies bypass it, while an actual
+        # retry gets its own record because it may consume additional model tokens.
+        usage, parent = TokenUsage(), current_usage.get()
+        token = current_usage.set(usage)
+        started_at, started = datetime.now(UTC), perf_counter()
+        result = None
+        usage_id = uuid4()
+        try:
+            result = await self._run(
+                tenant,
+                request,
+                persist_response=persist_response,
+                capture_enquiry=capture_enquiry,
+                message_ids=message_ids,
+            )
+            result["usage_id"] = usage_id
+            return result
+        finally:
+            current_usage.reset(token)
+            if parent is not None:
+                for key in (
+                    "input_tokens",
+                    "output_tokens",
+                    "llm_total",
+                    "llm_calls",
+                    "embedding_tokens",
+                    "embedding_calls",
+                ):
+                    setattr(parent, key, getattr(parent, key) + getattr(usage, key))
+                parent.llm_complete &= usage.llm_complete
+                parent.embedding_complete &= usage.embedding_complete
+                parent.seen.update(usage.seen)
+            status = "failed"
+            if result is not None and result["outcome"] != "escalation_failed":
+                status = "awaiting_send" if await_delivery else "completed"
+            # Telemetry failures must not turn an already saved answer into a failed
+            # conversation or cause a second billable generation on retry.
+            try:
+                async with self.db.transaction() as session:
+                    session.add(
+                        AiUsageRecord(
+                            id=usage_id,
+                            tenant_id=tenant,
+                            request_id=request.request_id,
+                            conversation_id=result.get("conversation_id") if result else None,
+                            channel=request.channel,
+                            started_at=started_at,
+                            completed_at=datetime.now(UTC),
+                            duration_ms=round((perf_counter() - started) * 1000, 2),
+                            input_tokens=usage.input_tokens,
+                            output_tokens=usage.output_tokens,
+                            tokens_complete=usage.llm_complete and usage.llm_calls > 0,
+                            llm_calls=usage.llm_calls,
+                            status=status,
+                        )
+                    )
+            except Exception as exc:
+                log.error("ai_usage_save_failed tenant=%s error=%s", tenant, type(exc).__name__)
+
+    async def _run(
         self, tenant, request, *, persist_response=None, capture_enquiry=True, message_ids=None
     ):
         if capture_enquiry:

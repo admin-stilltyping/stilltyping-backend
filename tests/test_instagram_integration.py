@@ -52,7 +52,7 @@ async def integration(db, monkeypatch):
         )
     calls, sent = [], []
 
-    async def run(tenant, payload):
+    async def run(tenant, payload, **kwargs):
         calls.append((tenant, payload))
         await capture_incoming(db, tenant, payload)
         return {"answer": "Reply: " + payload.message}

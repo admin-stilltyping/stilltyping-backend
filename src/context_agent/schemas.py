@@ -72,6 +72,7 @@ class KnowledgeContext(StrictModel):
 
 class ChatOutput(StrictModel):
     request_id: UUID
+    usage_id: UUID | None = None
     outcome: Literal["answered", "escalated", "escalation_failed"]
     answer: str
     tool_results: list[dict[str, Any]] = Field(default_factory=list)

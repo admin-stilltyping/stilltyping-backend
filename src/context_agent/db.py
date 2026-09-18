@@ -5,8 +5,10 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKeyConstraint,
     Index,
     Integer,
@@ -106,6 +108,31 @@ class Message(TimestampMixin, Base):
     )
 
 
+class AiUsageRecord(Base):
+    """One actual agent invocation, including all model/tool rounds."""
+
+    __tablename__ = "ai_usage_records"
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[str] = mapped_column(String(200))
+    request_id: Mapped[UUID] = mapped_column(Uuid)
+    conversation_id: Mapped[UUID | None] = mapped_column(Uuid)
+    channel: Mapped[str] = mapped_column(String(20))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    duration_ms: Mapped[float] = mapped_column(Float)
+    input_tokens: Mapped[int] = mapped_column(Integer)
+    output_tokens: Mapped[int] = mapped_column(Integer)
+    tokens_complete: Mapped[bool] = mapped_column(Boolean)
+    llm_calls: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20))
+    __table_args__ = (
+        CheckConstraint("status IN ('completed','failed','awaiting_send','send_failed')"),
+        CheckConstraint("duration_ms >= 0 AND input_tokens >= 0 AND output_tokens >= 0"),
+        Index("ix_ai_usage_tenant_started", "tenant_id", "started_at", "id"),
+        Index("ix_ai_usage_tenant_channel_started", "tenant_id", "channel", "started_at"),
+    )
+
+
 class ChannelAccount(TimestampMixin, Base):
     """Routes an inbound messaging account to a tenant and holds its credentials.
 
@@ -135,9 +162,7 @@ class WebhookEvent(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     channel: Mapped[str] = mapped_column(String(20))
     event_id: Mapped[str] = mapped_column(String(200))
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     __table_args__ = (UniqueConstraint("channel", "event_id"),)
 
 
