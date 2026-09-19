@@ -11,6 +11,7 @@ from context_agent.db import Base
 from crm import models as crm_models  # noqa: F401
 from custom_fields import models as custom_field_models  # noqa: F401 - register ORM metadata
 from dashboard import models as dashboard_models  # noqa: F401 - register ORM metadata
+from integrations import models as integration_models  # noqa: F401
 from modules import models as module_models  # noqa: F401 - register ORM metadata
 from orders import models as order_models  # noqa: F401
 from products import models as product_models  # noqa: F401 - register ORM metadata

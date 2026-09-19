@@ -1,5 +1,33 @@
 # Business integrations
 
+## Gemini AI
+
+Business admins can save or replace their own Gemini API key under **Integrations → Gemini AI**.
+`GET` and `PUT /admin/{slug}/integrations/gemini` require the owning business-admin JWT.
+The PUT body is `{ "api_key": "..." }`. Responses contain only the source (`business`,
+`platform`, or `unconfigured`), last four characters, update time, and storage availability.
+Google's model metadata endpoints verify access to the configured chat and embedding models
+before replacing an existing key. This check does not generate content or guarantee remaining quota.
+
+Set the server-only `INTEGRATION_ENCRYPTION_KEY` to a Fernet key before enabling saves:
+`python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`.
+Keep this key stable and backed up securely; changing it prevents reading existing encrypted
+credentials. Migration `017` adds the business-owned credential table with cascading deletion.
+Never expose this setting through a frontend/VITE variable.
+
+All new Agent Chat, web chat, Instagram, WhatsApp and Telegram AI operations use the business
+key when configured; knowledge put/add/update operations use the same key for extraction and
+embeddings. Existing operations finish with their original key. No model selection is added.
+The runtime reads the latest credential per operation and uses isolated SDK clients, so another
+business never inherits its key and saved updates work across Vercel instances without redeploying.
+Businesses without an override continue using `GEMINI_API_KEY`. Invalid or unreadable overrides
+fail rather than silently charging the platform key. Global tool-index initialization still uses
+the platform key.
+
+Provider API reference: https://ai.google.dev/api/models
+
+## Instagram
+
 Instagram setup is available in the business portal under **Integrations → Instagram**. Settings use the existing `channel_accounts` table; no migration is needed. Instagram setup is available to active business owners through the `channel.instagram` capability. CRM module choices remain independent.
 
 ## Owner API

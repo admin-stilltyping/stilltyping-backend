@@ -86,8 +86,11 @@ class Models:
         return vector
 
     async def close(self):
-        await self.embeddings.aio.aclose()
-        self.embeddings.close()
+        try:
+            await self.chat.aclose()
+        finally:
+            await self.embeddings.aio.aclose()
+            self.embeddings.close()
 
     async def structured(self, schema, instruction: str, data):
         try:

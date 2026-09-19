@@ -13,7 +13,9 @@ from appointments.routes import router as appointments_router
 from crm.routes import router as crm_router
 from custom_fields.routes import router as custom_fields_router
 from dashboard.routes import router as dashboard_router
+from integrations.gemini import router as gemini_router
 from integrations.routes import router as integrations_router
+from integrations.runtime import BusinessAI
 from knowledge_base.routes import router as knowledge_base_router
 from modules.dependencies import require_support_owner
 from modules.routes import management as module_management_router
@@ -28,11 +30,9 @@ from super_admin.errors import AuthError, auth_error_response
 from super_admin.routes import router as super_admin_router
 
 from . import instructions, support
-from .agent import Agent
 from .ai_usage import router as ai_usage_router
 from .config import Settings
 from .db import Database
-from .knowledge import KnowledgeService
 from .models import Models
 from .notification_routes import router as notification_router
 from .notifications import PushDeliveryMiddleware, push_worker
@@ -40,7 +40,6 @@ from .performance import PerformanceMiddleware
 from .performance_routes import router as performance_router
 from .portal_chat import router as portal_chat_router
 from .portal_webhooks import router as portal_webhooks_router
-from .retrieval import Retriever
 from .schemas import (
     AddInput,
     ChatInput,
@@ -70,14 +69,15 @@ def create_app(services=None):
         db, vectors = Database(settings.database_url), Vectors(settings)
         models = None
         try:
-            models = Models(settings)
-            retriever = Retriever(models, vectors, settings)
+            if settings.gemini_api_key and settings.gemini_api_key.get_secret_value():
+                models = Models(settings)
+            business_ai = BusinessAI(db, vectors, settings, models)
             app.state.services = {
                 "db": db,
                 "vectors": vectors,
                 "settings": settings,
-                "knowledge": KnowledgeService(db, models, vectors, retriever),
-                "agent": Agent(db, models, retriever, settings),
+                "knowledge": business_ai,
+                "agent": business_ai,
             }
             async with push_worker(db, settings):
                 yield
@@ -104,6 +104,7 @@ def create_app(services=None):
     app.include_router(appointments_router)
     app.include_router(public_chat_router)
     app.include_router(integrations_router)
+    app.include_router(gemini_router)
     app.include_router(portal_chat_router)
     app.include_router(ai_usage_router)
     app.include_router(portal_webhooks_router)

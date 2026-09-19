@@ -11,6 +11,7 @@ class Settings(SuperAdminSettings):
     tenant_api_key: SecretStr | None = None
     qdrant_api_key: SecretStr | None = None
     gemini_api_key: SecretStr | None = None
+    integration_encryption_key: SecretStr | None = None
     chat_model: str = "gemini-3.5-flash"
     embedding_model: str = "gemini-embedding-2"
     embedding_dimensions: int = Field(default=3072, gt=0)
