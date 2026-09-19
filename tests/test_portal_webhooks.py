@@ -15,6 +15,7 @@ from test_webhooks import FakeAgent, app_for, seed_account, sign, wa_payload
 
 from context_agent.channels import ADAPTERS, ChannelNotConfigured
 from context_agent.db import WebhookEvent
+from context_agent.schemas import DomainError
 from context_agent.webhooks import prepare_webhook, process_jobs, process_webhook, send_error_code
 
 integration = test_instagram_integration.integration
@@ -140,6 +141,43 @@ async def test_failures_are_saved_without_leaking_exception_secrets(db, monkeypa
     )
     assert record.duration_ms > 0 and record.completed_at
     assert "secret-token" not in caplog.text and "private-customer" not in caplog.text
+
+
+@pytest.mark.parametrize("code, text", [
+    ("model_rate_limited", "rate or quota limit (HTTP 429)"),
+    ("model_unavailable", "temporarily unavailable (HTTP 503)"),
+    ("model_authorization_failed", "Gemini rejected access"),
+    ("gemini_not_configured", "No Gemini API key is configured"),
+    ("secret-token-untrusted-code", "exact cause was not recorded"),
+])
+async def test_generation_failure_reason_reaches_owner_without_secrets(
+    integration, caplog, code, text
+):
+    c = integration
+    agent = FakeAgent()
+
+    async def fail(*args, **kwargs):
+        raise DomainError(503, code, "secret-token private-customer-message")
+
+    agent.run = fail
+    await process_webhook(
+        {"db": c.db, "agent": agent}, "instagram", c.a.business.slug, {},
+        json.dumps({"entry": [event(CREDS["account_id"])]}).encode(),
+    )
+    record = (await rows(c.db))[0]
+    assert record.status == "failed" and record.completed_at and record.duration_ms > 0
+    assert record.error_code == (
+        "generation_failed" if code == "secret-token-untrusted-code" else code
+    )
+    assert c.sent == []
+    url = f"/admin/{c.a.business.slug}/webhook-events"
+    response = await c.client.get(url, headers=c.a.headers)
+    assert response.status_code == 200
+    assert text in response.json()["items"][0]["detail"]
+    assert str(record.request_id) in caplog.text
+    for secret in ("secret-token", "private-customer-message"):
+        assert secret not in response.text and secret not in caplog.text
+    assert (await c.client.get(url, headers=c.b.headers)).status_code == 403
 
 
 @pytest.mark.parametrize("channel", ["instagram", "whatsapp", "telegram"])

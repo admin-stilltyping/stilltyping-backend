@@ -157,7 +157,9 @@ class Agent:
         try:
             response = await self.models.chat.bind_tools(schemas).ainvoke(state["messages"])
         except Exception as exc:
-            raise processing_error(exc, "Answer generation failed.") from exc
+            raise processing_error(
+                exc, "Answer generation failed.", operation="answer_generation"
+            ) from exc
         return {"messages": state["messages"] + [response]}
 
     def route(self, state):

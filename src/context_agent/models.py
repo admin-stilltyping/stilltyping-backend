@@ -12,21 +12,38 @@ from .usage import UsageCallback, current_usage
 log = logging.getLogger(__name__)
 
 
-def processing_error(exc, message):
+def processing_error(exc, message, *, operation="unknown"):
     current = exc
     seen = set()
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         code = getattr(current, "code", None)
-        if code in (429, 503):
-            log.warning("Gemini request unavailable: provider_status=%s", code)
+        if code in (401, 403, 429, 503):
+            log.warning(
+                "Gemini request failed: operation=%s provider_status=%s", operation, code
+            )
+            if code == 429:
+                return DomainError(
+                    503,
+                    "model_rate_limited",
+                    "Gemini rejected the request because of a rate or quota limit (HTTP 429). "
+                    "Check the key's project usage and limits in Google AI Studio.",
+                )
+            if code in (401, 403):
+                return DomainError(
+                    503,
+                    "model_authorization_failed",
+                    "Gemini rejected access. Check the API key and its permissions in Integrations.",
+                )
             return DomainError(
                 503,
                 "model_unavailable",
-                "Gemini is temporarily unavailable or its quota is exhausted. Try again later.",
+                "Gemini is temporarily unavailable (HTTP 503). Try again later.",
             )
         current = current.__cause__
-    log.warning("Model processing failed: exception_type=%s", type(exc).__name__)
+    log.warning(
+        "Model processing failed: operation=%s exception_type=%s", operation, type(exc).__name__
+    )
     return DomainError(502, "processing_failed", message)
 
 
@@ -102,7 +119,9 @@ class Models:
             )
             return result if isinstance(result, schema) else schema.model_validate(result)
         except Exception as exc:
-            raise processing_error(exc, "Structured model processing failed.") from exc
+            raise processing_error(
+                exc, "Structured model processing failed.", operation="structured_generation"
+            ) from exc
 
     async def embed(self, texts: list[str]):
         if not texts:
@@ -110,10 +129,14 @@ class Models:
         try:
             return [await self._embed_one(f"title: none | text: {text}") for text in texts]
         except Exception as exc:
-            raise processing_error(exc, "Embedding generation failed.") from exc
+            raise processing_error(
+                exc, "Embedding generation failed.", operation="document_embedding"
+            ) from exc
 
     async def query(self, text: str):
         try:
             return await self._embed_one(f"task: search result | query: {text}")
         except Exception as exc:
-            raise processing_error(exc, "Query embedding failed.") from exc
+            raise processing_error(
+                exc, "Query embedding failed.", operation="query_embedding"
+            ) from exc

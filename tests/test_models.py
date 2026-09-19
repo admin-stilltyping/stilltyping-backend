@@ -63,17 +63,46 @@ def test_missing_key_has_actionable_error():
         Models(Settings(_env_file=None, gemini_api_key=""))
 
 
-@pytest.mark.parametrize("code", [429, 503])
-def test_provider_unavailability_is_not_hidden(code):
+@pytest.mark.parametrize("code, expected", [
+    (429, "model_rate_limited"),
+    (503, "model_unavailable"),
+    (401, "model_authorization_failed"),
+    (403, "model_authorization_failed"),
+])
+def test_provider_unavailability_is_not_hidden(code, expected, caplog):
     from context_agent.models import processing_error
 
-    cause = RuntimeError("provider failure")
+    cause = RuntimeError("secret-key-in-provider-url")
     cause.code = code
     wrapper = RuntimeError("adapter failure")
     wrapper.__cause__ = cause
-    error = processing_error(wrapper, "Processing failed")
+    error = processing_error(wrapper, "Processing failed", operation="query_embedding")
     assert error.status == 503
-    assert error.code == "model_unavailable"
+    assert error.code == expected
+    assert "operation=query_embedding" in caplog.text
+    assert f"provider_status={code}" in caplog.text
+    assert "secret-key" not in caplog.text
+    assert "secret-key" not in str(error)
+
+
+async def test_query_embedding_preserves_provider_limit_and_operation(monkeypatch, caplog):
+    from google.genai.errors import ClientError
+
+    models = Models(Settings(_env_file=None, gemini_api_key="test-placeholder"))
+    monkeypatch.setattr(
+        models.embeddings.aio.models,
+        "embed_content",
+        AsyncMock(side_effect=ClientError(429, {"error": {"message": "secret-api-key"}})),
+    )
+    try:
+        with pytest.raises(DomainError) as failure:
+            await models.query("private-customer-message")
+        assert failure.value.code == "model_rate_limited"
+        assert "operation=query_embedding provider_status=429" in caplog.text
+        assert "secret-api-key" not in caplog.text
+        assert "private-customer-message" not in caplog.text
+    finally:
+        await models.close()
 
 
 def test_other_processing_errors_remain_502():

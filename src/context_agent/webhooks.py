@@ -26,7 +26,7 @@ from super_admin.businesses.models import Business
 
 from .channels import ADAPTERS, ChannelNotConfigured
 from .db import AiUsageRecord, ChannelAccount, WebhookEvent
-from .schemas import ChatInput
+from .schemas import ChatInput, DomainError
 
 log = logging.getLogger(__name__)
 
@@ -143,6 +143,18 @@ def send_error_code(exc):
     return "send_failed"
 
 
+def generation_error_code(exc):
+    # Only trusted application codes are safe to persist or show to a business owner.
+    if isinstance(exc, DomainError) and exc.code in {
+        "model_rate_limited",
+        "model_unavailable",
+        "model_authorization_failed",
+        "gemini_not_configured",
+    }:
+        return exc.code
+    return "generation_failed"
+
+
 async def process_jobs(services, channel, tenant, config, jobs):
     adapter = ADAPTERS[channel]
     db, agent = services["db"], services["agent"]
@@ -151,12 +163,16 @@ async def process_jobs(services, channel, tenant, config, jobs):
         await update_event(db, tenant, event_id, "processing")
         try:
             result = await agent.run(tenant, payload, await_delivery=True)
-        except Exception:
+        except Exception as exc:
             # Exceptions from SDKs can contain request URLs or tokens. Persist only
             # a safe reason, never exception strings or the raw provider payload.
-            log.error("webhook_agent_failed channel=%s event=%s", channel, event_id)
+            error_code = generation_error_code(exc)
+            log.error(
+                "webhook_agent_failed channel=%s event=%s request_id=%s code=%s",
+                channel, event_id, payload.request_id, error_code,
+            )
             await update_event(
-                db, tenant, event_id, "failed", started=started, error_code="generation_failed"
+                db, tenant, event_id, "failed", started=started, error_code=error_code
             )
             continue
         error_code = None
