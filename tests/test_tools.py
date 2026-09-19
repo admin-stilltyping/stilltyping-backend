@@ -7,7 +7,7 @@ from conftest import FakeModels, FakeVectors
 from sqlalchemy import select
 
 from context_agent.db import Tool
-from context_agent.tools import SUPPORT, ToolContext, available_tools, execute, sync_tools
+from context_agent.tools import REGISTRY, SUPPORT, ToolContext, available_tools, execute, sync_tools
 
 
 async def test_sync_skips_unchanged_embeddings(db):
@@ -15,9 +15,9 @@ async def test_sync_skips_unchanged_embeddings(db):
     await sync_tools(db, models, vectors)
     first_points = dict(vectors.points)
     await sync_tools(db, models, vectors)
-    assert len(models.embedded) == 1 and first_points == vectors.points
+    assert len(models.embedded) == len(REGISTRY) and first_points == vectors.points
     async with db.transaction() as session:
-        assert len(list((await session.scalars(select(Tool))).all())) == 1
+        assert len(list((await session.scalars(select(Tool))).all())) == len(REGISTRY)
 
 
 async def test_sync_reembeds_description_change(db):
@@ -25,7 +25,7 @@ async def test_sync_reembeds_description_change(db):
     await sync_tools(db, models, vectors)
     changed = replace(SUPPORT, description="Updated description")
     await sync_tools(db, models, vectors, [changed])
-    assert len(models.embedded) == 2
+    assert len(models.embedded) == len(REGISTRY) + 1
     assert changed.id == SUPPORT.id
 
 
@@ -82,5 +82,5 @@ async def test_sync_rebuilds_unchanged_tools_in_new_index(db):
     await sync_tools(db, models, FakeVectors())
     new_index = FakeVectors()
     await sync_tools(db, models, new_index, force_reembed=True)
-    assert len(models.embedded) == 2
-    assert len(new_index.points) == 1
+    assert len(models.embedded) == len(REGISTRY) * 2
+    assert len(new_index.points) == len(REGISTRY)

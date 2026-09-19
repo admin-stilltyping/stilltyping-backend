@@ -7,7 +7,7 @@ from qdrant_client import AsyncQdrantClient
 from context_agent import bootstrap
 from context_agent.config import Settings
 from context_agent.db import Document, KnowledgeUnit
-from context_agent.tools import SUPPORT
+from context_agent.tools import REGISTRY, SUPPORT
 from context_agent.vectors import Vectors
 
 
@@ -41,15 +41,15 @@ async def test_bootstrap_recovers_missing_vectors_and_reuses_ready_data(db, monk
         )
     try:
         await bootstrap.initialize(settings)
-        assert len(models.embedded) == 2  # Knowledge and support tool recovered.
+        assert len(models.embedded) == 1 + len(REGISTRY)  # Knowledge and all tools recovered.
         await bootstrap.initialize(settings)
-        assert len(models.embedded) == 2  # Restart consumes no embeddings.
+        assert len(models.embedded) == 1 + len(REGISTRY)  # Restart consumes no embeddings.
         await vectors.delete("tools", [SUPPORT.id])
         await bootstrap.initialize(settings)
-        assert len(models.embedded) == 3
+        assert len(models.embedded) == 1 + 2 * len(REGISTRY)
         await vectors.delete("knowledge_units", [unit_id])
         await bootstrap.initialize(settings)
-        assert len(models.embedded) == 4
+        assert len(models.embedded) == 2 + 2 * len(REGISTRY)
     finally:
         await close_vectors()
         await close_db()

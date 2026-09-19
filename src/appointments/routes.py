@@ -1,26 +1,19 @@
-from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Query, Request
 from sqlalchemy import func, select
 
-from context_agent.notifications import queue_notification
 from context_agent.schemas import DomainError
-from crm.service import fingerprint, owned, retry_result, transaction_customer
+from crm.service import owned
 from custom_fields.service import Owner
 from modules.service import module_transaction
-from services.models import Service
 
 from .models import Appointment
 from .schemas import AppointmentCreate, AppointmentOutput, AppointmentUpdate
+from .service import check_future, create_appointment
 
 router = APIRouter(prefix="/admin/{slug}/appointments", tags=["Appointments"])
-
-
-def check_future(value):
-    if value <= datetime.now(UTC):
-        raise DomainError(400, "past_appointment", "Choose a future appointment time.")
 
 
 @router.get("")
@@ -70,37 +63,7 @@ async def create(payload: AppointmentCreate, identity: Owner, request: Request):
     async with module_transaction(
         request.app.state.services["db"], identity.business, "appointments"
     ) as session:
-        previous = await retry_result(session, Appointment, identity.business.id, payload)
-        if previous:
-            return previous
-        check_future(payload.scheduled_at)
-        service = await owned(session, Service, identity.business.id, payload.service_id)
-        if service.status != "active":
-            raise DomainError(
-                400, "service_unavailable", "This service is not available for booking."
-            )
-        customer = await transaction_customer(session, identity.business, payload)
-        row = Appointment(
-            business_id=identity.business.id,
-            customer_id=customer.id,
-            lead_id=payload.lead_id,
-            service_id=service.id,
-            service_name=service.name,
-            price=service.price,
-            currency=service.currency,
-            duration_minutes=service.duration_minutes,
-            scheduled_at=payload.scheduled_at,
-            notes=payload.notes,
-            request_id=payload.request_id,
-            request_hash=fingerprint(payload),
-        )
-        session.add(row)
-        await session.flush()
-        await session.refresh(row)
-        await queue_notification(
-            session, identity.business.id, "appointment", row.id, f"/appointments/{row.id}"
-        )
-        return row
+        return await create_appointment(session, identity.business, payload)
 
 
 @router.patch("/{appointment_id}", response_model=AppointmentOutput)

@@ -9,6 +9,7 @@ import httpx
 from jsonschema import Draft202012Validator
 from sqlalchemy import select
 
+from appointments.agent_tools import book, booking_enabled, list_services
 from modules.service import support_enabled
 
 from . import support
@@ -101,8 +102,53 @@ SUPPORT = ToolDefinition(
     handler=support_ticket,
 )
 
+APPOINTMENT_SERVICES = ToolDefinition(
+    name="list_appointment_services",
+    description="Look up this business's active appointment services and their IDs, prices, "
+    "duration and timezone before booking. Search by name/description or use an empty search "
+    "to browse. This does not check live slot availability. Never invent service IDs.",
+    parameters_schema={
+        "type": "object",
+        "properties": {
+            "search": {"type": "string", "maxLength": 200},
+            "offset": {"type": "integer", "minimum": 0},
+        },
+        "additionalProperties": False,
+    },
+    handler_key="appointments.list_services",
+    handler=list_services,
+)
+
+BOOK_APPOINTMENT = ToolDefinition(
+    name="book_appointment",
+    description="Save one appointment after the patient explicitly requests booking and supplies "
+    "their name, concern, service, date and time. First look up the service ID using "
+    "list_appointment_services. Date YYYY-MM-DD and 24-hour time HH:MM are in the business's "
+    "timezone. Follow the business's hours and Sunday/approval rules; ask to clarify ambiguous "
+    "dates/times. Supply a patient-provided international phone (+countrycode) for web/admin chat; "
+    "social chat can use its actual sender identity. Never invent patient details. Success saves "
+    "a Scheduled appointment pending staff confirmation, not a guaranteed available slot. "
+    "Do not call for information-only questions, cancellations or rescheduling.",
+    parameters_schema={
+        "type": "object",
+        "properties": {
+            "service_id": {"type": "string", "format": "uuid"},
+            "patient_name": {"type": "string", "minLength": 1, "maxLength": 200},
+            "date": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"},
+            "time": {"type": "string", "pattern": r"^\d{2}:\d{2}$"},
+            "phone": {"type": "string", "maxLength": 40},
+            "concern": {"type": "string", "minLength": 1, "maxLength": 2000},
+        },
+        "required": ["service_id", "patient_name", "date", "time", "concern"],
+        "additionalProperties": False,
+    },
+    handler_key="appointments.book",
+    handler=book,
+)
+
+APPOINTMENT_TOOLS = [APPOINTMENT_SERVICES, BOOK_APPOINTMENT]
 # Add developer-authored ToolDefinition objects here. No dynamic imports from database values.
-REGISTRY = [SUPPORT]
+REGISTRY = [SUPPORT, *APPOINTMENT_TOOLS]
 
 
 def resolve_definition(row, registry=REGISTRY):
@@ -130,6 +176,8 @@ async def execute(definition, args, context):
         if len(json.dumps(result)) > 30000:
             return {"ok": False, "error": "Tool response exceeded the allowed size."}
         return result
+    except DomainError as exc:
+        return {"ok": False, "code": exc.code, "error": exc.message}
     except Exception:
         # Never claim a timed-out or failed external action succeeded; no automatic mutation retry.
         return {"ok": False, "error": "Tool execution failed or its outcome is unknown."}
@@ -198,4 +246,12 @@ async def available_tools(session, tenant, retrieved, registry=REGISTRY):
         selected[SUPPORT.name] = SUPPORT
     else:
         selected.pop(SUPPORT.name, None)
+    # Booking spans several messages ("tomorrow", then a name, then "yes").
+    # Do not make these tools depend on whether that short reply matches a vector.
+    enabled = await booking_enabled(session, tenant)
+    for definition in APPOINTMENT_TOOLS:
+        if enabled and definition in registry:
+            selected[definition.name] = definition
+        else:
+            selected.pop(definition.name, None)
     return selected

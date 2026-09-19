@@ -71,9 +71,55 @@ Services support the same tenant-specific field definitions and six validated
 field types as products. Archiving keeps service definitions, custom values and
 past appointment snapshots. Currency is immutable after service creation.
 
-This is manual order/booking management. Payment collection, tax/discount rules,
-stock accounting, staff/resource availability and automatic AI transaction tools
-are outside this implementation. Booking does not reserve an exclusive staff slot.
+Payment collection, tax/discount rules, stock accounting and staff/resource
+availability are outside this implementation. Booking does not reserve an
+exclusive staff slot. Orders remain a manual admin action.
+
+## Chat appointment booking
+
+The shared agent exposes `list_appointment_services` and `book_appointment` for
+active businesses with Services/Appointments and Customers enabled. These tools
+remain available across short follow-up messages without depending on semantic
+tool retrieval or a tool-index resync. They work through every channel using
+`Agent.run`, including Admin Agent Chat, public web chat and connected social DMs.
+
+The agent looks up an active service, collects the patient's name, concern and
+preferred local date/time, and calls the same appointment service used by the
+owner API. Service price, duration and business identity come from the server.
+Dates are interpreted in the business's saved IANA timezone; past, invalid and
+ambiguous DST times are rejected. The system supplies current business time to
+the agent for relative dates. Opening-hour and special-day rules come from the
+business instructions; there is no structured calendar/availability validator.
+
+Web/admin chat needs an international phone number. Social chat uses only the
+server-provided channel and sender ID, optionally adding a patient-supplied
+phone. Anonymous web session IDs are never treated as social identities. An
+existing lead from the actual conversation is converted when Leads is enabled.
+Patient name, channel and concern are retained in appointment notes.
+
+Successful calls create **Scheduled** appointments pending staff confirmation,
+visible immediately in the portal. The transaction also queues the existing
+admin notification; a push is delivered only to opted-in devices. A save does
+not prove notification delivery, doctor acceptance, or live slot availability.
+Staff confirmation, rescheduling and cancellation continue in the admin portal;
+the chat agent must not simulate those actions by creating another appointment.
+
+The request ID is scoped to the actual chat turn and sender. Retrying it reuses
+the saved appointment; changed details produce an error. Repeated confirmations
+in a later message reuse an active appointment for the same contact, patient,
+service and exact time. Patient names are kept separate so family members can
+share a contact. The appointment, customer/lead conversion and notification are
+atomic under the business lock. Disabled modules or foreign service IDs cannot
+be bypassed with model arguments.
+
+No database migration is required. Configure active, bookable services in
+**Services** first, with the correct price and duration. For a consultation-first
+clinic, create consultation services rather than inventing unapproved treatment
+prices. If no active service matches, chat must direct the request to staff.
+
+Tests: `tests/test_appointment_agent_tools.py` covers the agent-to-portal flow,
+sender/tenant isolation, timezone handling, retries, conversion, notifications
+and rollback, alongside the existing manual appointment tests.
 
 ## Incoming enquiry capture
 
