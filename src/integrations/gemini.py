@@ -60,7 +60,8 @@ class GeminiInput(BaseModel):
     @field_validator("api_key", mode="before")
     @classmethod
     def clean_key(cls, value):
-        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{20,256}", value.strip()):
+        # Google auth keys contain a dot (AQ.); Google verifies validity below.
+        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9._-]{20,256}", value.strip()):
             raise ValueError("Enter a valid Gemini API key.")
         return value.strip()
 

@@ -115,6 +115,31 @@ async def test_only_owner_can_read_or_update(integration):
     assert other.json()["key_last_four"] is None
 
 
+async def test_auth_key_with_dot_is_verified_saved_and_encrypted(integration):
+    c = integration
+    key = "AQ.test-auth-key_with-URL-safe-characters-9012"
+    response = await save(c, key=f"  {key}  ")
+    assert response.status_code == 200, response.text
+    assert response.json()["source"] == "business"
+    assert response.json()["key_last_four"] == "9012"
+    c.verify.assert_awaited_once_with(key, c.settings)
+    async with c.db.transaction() as session:
+        row = await session.get(BusinessGeminiCredential, c.a.business.id)
+        assert key not in row.encrypted_key
+        assert gemini.decrypt_key(c.settings, row) == key
+    assert key not in response.text
+
+
+@pytest.mark.parametrize("suffix", ["\nX", "\rX", "\tX", " X", "\x00", "\\X"])
+async def test_auth_key_rejects_internal_whitespace_and_control_characters(integration, suffix):
+    c = integration
+    key = "AQ.test-auth-key-placeholder" + suffix
+    response = await save(c, key=key)
+    assert response.status_code == 400
+    c.verify.assert_not_awaited()
+    assert "test-auth-key-placeholder" not in response.text
+
+
 async def test_rejected_update_preserves_saved_key_and_no_secret_errors(integration):
     c = integration
     await save(c)
