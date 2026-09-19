@@ -1,5 +1,8 @@
-from pydantic import Field, SecretStr
+from typing import Literal
+
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 from super_admin.config import SuperAdminSettings
 
@@ -7,6 +10,7 @@ from super_admin.config import SuperAdminSettings
 class Settings(SuperAdminSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     database_url: str = "postgresql+asyncpg://agent:agent@localhost:5432/agent"
+    database_pooler_mode: Literal["configured", "transaction"] = "configured"
     qdrant_url: str = "http://localhost:6333"
     tenant_api_key: SecretStr | None = None
     qdrant_api_key: SecretStr | None = None
@@ -27,3 +31,18 @@ class Settings(SuperAdminSettings):
     support_webhook_token: SecretStr | None = None
     push_vapid_private_key: SecretStr | None = None
     push_vapid_subject: str = ""
+
+    @model_validator(mode="after")
+    def database_pooler(self):
+        if self.database_pooler_mode == "transaction":
+            url = make_url(self.database_url)
+            if (
+                url.drivername != "postgresql+asyncpg"
+                or not (url.host or "").endswith(".pooler.supabase.com")
+                or url.port not in (5432, 6543)
+            ):
+                raise ValueError("Transaction mode requires a Supabase asyncpg pooler URL.")
+            # Switch only the pooler port. Preserve the exact database, host,
+            # credentials and SSL options without reading/replacing the Vercel secret.
+            self.database_url = url.set(port=6543).render_as_string(hide_password=False)
+        return self

@@ -2,12 +2,11 @@ import asyncio
 
 from alembic import context
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
 
 from appointments import models as appointment_models  # noqa: F401
 from context_agent import notification_models  # noqa: F401
 from context_agent.config import Settings
-from context_agent.db import Base
+from context_agent.db import Base, database_engine
 from crm import models as crm_models  # noqa: F401
 from custom_fields import models as custom_field_models  # noqa: F401 - register ORM metadata
 from dashboard import models as dashboard_models  # noqa: F401 - register ORM metadata
@@ -31,7 +30,7 @@ def configure(connection):
 
 
 async def run():
-    engine = create_async_engine(Settings().database_url)
+    engine = database_engine(Settings().database_url)
     async with engine.connect() as connection:
         await connection.run_sync(configure)
     await engine.dispose()

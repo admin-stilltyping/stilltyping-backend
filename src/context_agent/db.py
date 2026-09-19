@@ -20,8 +20,10 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.pool import NullPool
 
 from .performance import current_timing, instrument_engine, measure, measure_exit
 
@@ -227,9 +229,30 @@ def content_hash(title: str, content: str) -> str:
     return hashlib.sha256(embedding_text(title, content).encode()).hexdigest()
 
 
+def database_engine(url):
+    parsed = make_url(url)
+    options = {"pool_pre_ping": True}
+    if (
+        parsed.drivername == "postgresql+asyncpg"
+        and (parsed.host or "").endswith(".pooler.supabase.com")
+        and parsed.port == 6543
+    ):
+        # Supavisor owns pooling. Serverless containers must not hold idle
+        # sessions or reuse prepared statements across backend connections.
+        options.update(
+            poolclass=NullPool,
+            connect_args={
+                "statement_cache_size": 0,
+                "prepared_statement_cache_size": 0,
+                "prepared_statement_name_func": lambda: f"__agent_{uuid4().hex}__",
+            },
+        )
+    return create_async_engine(url, **options)
+
+
 class Database:
     def __init__(self, url: str):
-        self.engine = create_async_engine(url, pool_pre_ping=True)
+        self.engine = database_engine(url)
         instrument_engine(self.engine)
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
 

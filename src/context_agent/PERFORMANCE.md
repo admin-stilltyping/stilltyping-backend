@@ -66,3 +66,22 @@ The query execution / connection / transport / application split was not yet
 measured in production: diagnostic deployment `7639025` failed internally in
 Vercel, and its replacement was queued at the last check. Do not treat total API
 duration as PostgreSQL execution time or assume the database region is known.
+
+## Production connection exhaustion — 2026-09-19
+
+During the chat-booking rollout, the existing deployment `01d66b5` failed at
+startup in Alembic with `(EMAXCONNSESSION) max clients reached in session mode`,
+reporting a pool size of 15. This was a connection-capacity outage, separate from
+the deferred query-performance work above.
+
+`DATABASE_POOLER_MODE=transaction` is an explicit opt-in for a Supabase asyncpg
+pooler URL. Settings preserves the database, credentials, host and SSL options,
+changing only the port to 6543. Both migrations and application transactions use
+the same engine builder: NullPool, disabled asyncpg/SQLAlchemy prepared-statement
+caches, and unique statement names. Ordinary PostgreSQL and SQLite retain their
+configured behaviour. Business locks are transaction-scoped and remain intact.
+
+This follows [Supabase's SQLAlchemy guidance](https://supabase.com/docs/guides/troubleshooting/using-sqlalchemy-with-supabase-FUqebT)
+and [SQLAlchemy's asyncpg pooler guidance](https://docs.sqlalchemy.org/en/20/dialects/postgresql.html#prepared-statement-name-with-pgbouncer).
+It does not raise database capacity, terminate sessions, or change query/tenant
+locking semantics. Old deployment connections may take time to drain.
