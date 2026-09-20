@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel
 
 from context_agent.config import Settings
@@ -20,7 +21,10 @@ async def test_gemini_configuration_and_embedding_contract(monkeypatch, tmp_path
     settings = Settings(_env_file=env)
     models = Models(settings)
     try:
-        assert models.chat.model == "gemini-3.5-flash"
+        assert models.chat.model == "gemini-3.8-flash"
+        config = models.chat._prepare_request([HumanMessage("Hello")])["config"]
+        assert config.candidate_count is None
+        assert config.temperature is None and config.top_p is None and config.top_k is None
         models.chat.with_structured_output(Answer, method="json_schema")
         models.chat.bind_tools(
             [
@@ -61,6 +65,51 @@ async def test_gemini_configuration_and_embedding_contract(monkeypatch, tmp_path
 def test_missing_key_has_actionable_error():
     with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
         Models(Settings(_env_file=None, gemini_api_key=""))
+
+
+@pytest.mark.parametrize("cached", [False, True])
+async def test_gemini38_preserves_parallel_tool_ids_and_signatures(cached):
+    from google.genai import types
+    from langchain_google_genai.chat_models import _parse_response_candidate
+
+    models = Models(Settings(_env_file=None, gemini_api_key="test-placeholder"))
+    try:
+        candidate = types.Candidate(content=types.Content(role="model", parts=[
+            types.Part(function_call=types.FunctionCall(
+                id="provider-one", name="lookup", args={"query": "one"}
+            ), thought_signature=b"signature-one"),
+            types.Part(function_call=types.FunctionCall(
+                id="provider-two", name="lookup", args={"query": "two"}
+            )),
+        ]))
+        reply = _parse_response_candidate(candidate, model_name="gemini-3.8-flash")
+        messages = [
+            HumanMessage("Look up both"), reply,
+            ToolMessage(content='{"answer": "two"}', tool_call_id="provider-two"),
+            ToolMessage(content='{"answer": "one"}', tool_call_id="provider-one"),
+            AIMessage(content="", tool_calls=[
+                {"name": "lookup", "args": {"query": "three"}, "id": "provider-three"}
+            ]),
+            ToolMessage(content='{"answer": "three"}', tool_call_id="provider-three"),
+        ]
+        kwargs = {"cached_content": "cachedContents/test"} if cached else {}
+        request = models.chat._prepare_request(messages, **kwargs)
+        parts = [p for c in request["contents"] for p in c.parts]
+        assert [p.function_call.id for p in parts if p.function_call] == [
+            "provider-one", "provider-two", "provider-three"
+        ]
+        results = [p.function_response for p in parts if p.function_response]
+        assert [(p.id, p.name, p.response["answer"]) for p in results] == [
+            ("provider-two", "lookup", "two"),
+            ("provider-one", "lookup", "one"),
+            ("provider-three", "lookup", "three"),
+        ]
+        assert next(p for p in parts if p.function_call).thought_signature == b"signature-one"
+        assert request["config"].cached_content == kwargs.get("cached_content")
+        with pytest.raises(ValueError, match="final turn"):
+            models.chat._prepare_request([HumanMessage("Hi"), AIMessage("Hello")])
+    finally:
+        await models.close()
 
 
 @pytest.mark.parametrize("code, expected", [

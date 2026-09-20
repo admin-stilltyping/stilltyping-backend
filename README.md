@@ -81,7 +81,7 @@ docker compose exec agent context-agent reconcile --tenant YOUR_TENANT_ID
 
 Requires Python 3.12+ and uv. Start just storage using `docker compose up -d postgres qdrant`, then run `uv sync --frozen`, `uv run alembic upgrade head`, `uv run context-agent init-index`, `uv run context-agent sync-tools`, and `uv run uvicorn context_agent.api:app --host 127.0.0.1 --port 8000`. Keep localhost storage URLs in `.env` for this mode.
 
-Set `GEMINI_API_KEY` in your local `.env` (which Git ignores). Gemini is the only configured provider: `gemini-3.5-flash` handles agent responses, extraction and updates; `gemini-embedding-2` generates 3072-dimensional knowledge, tool and query vectors. No OpenAI or Anthropic key is required. The chat adapter supports tool calling and native structured output. Embedding requests use Google's search/document task prefixes, one input per request to avoid aggregation. Requests have bounded timeouts and retries.
+Set `GEMINI_API_KEY` in your local `.env` (which Git ignores). Gemini is the only configured provider: `gemini-3.8-flash` handles agent responses, extraction and updates; `gemini-embedding-2` generates 3072-dimensional knowledge, tool and query vectors. No OpenAI or Anthropic key is required. The chat adapter supports tool calling and native structured output. Embedding requests use Google's search/document task prefixes, one input per request to avoid aggregation. Requests have bounded timeouts and retries.
 
 Google lists free-tier pricing for both defaults, subject to project quotas; a paid project's usage follows its billing tier. Model quality still requires evaluation on your customer data.
 

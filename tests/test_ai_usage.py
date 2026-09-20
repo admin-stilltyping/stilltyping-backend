@@ -34,7 +34,7 @@ def record(tenant, when, channel="instagram", **kwargs):
         input_tokens=kwargs.pop("input_tokens", 100),
         output_tokens=20,
         tokens_complete=kwargs.pop("tokens_complete", True),
-        llm_calls=1,
+        llm_calls=kwargs.pop("llm_calls", 1),
         status=kwargs.pop("status", "completed"),
         **kwargs,
     )
@@ -91,6 +91,8 @@ async def test_owner_auth_timezone_filters_summary_and_pagination(chat):
         "cached_input_tokens": 0,
         "uncached_input_tokens": 0,
         "cache_incomplete_replies": 2,
+        "cached_replies": 0,
+        "uncached_replies": 0,
     }
     second = (await c.client.get(url, params={**params, "offset": 1}, headers=c.a.headers)).json()
     assert second["next_offset"] is None
@@ -113,6 +115,9 @@ async def test_empty_default_range_and_unknown_values(chat):
     assert data["items"] == [] and data["next_offset"] is None
     assert data["summary"]["average_duration_ms"] is None
     assert data["summary"]["input_tokens"] == 0
+    assert data["summary"]["cached_replies"] == 0
+    assert data["summary"]["uncached_replies"] == 0
+    assert data["summary"]["cache_incomplete_replies"] == 0
 
 
 async def test_agent_chat_records_all_calls_once_and_cached_retry_does_not_add_usage(
@@ -275,11 +280,45 @@ async def test_cache_breakdown_distinguishes_historical_unknowns_and_tenants(cha
     assert data["summary"]["cached_input_tokens"] == 5000
     assert data["summary"]["uncached_input_tokens"] == 1100
     assert data["summary"]["cache_incomplete_replies"] == 1
+    assert data["summary"]["cached_replies"] == 1
+    assert data["summary"]["uncached_replies"] == 1
     historical = next(row for row in data["items"] if row["input_tokens"] == 700)
     assert historical["cached_input_tokens"] is None
     assert historical["uncached_input_tokens"] is None
     known = next(row for row in data["items"] if row["input_tokens"] == 6000)
     assert known["cached_input_tokens"] == 5000 and known["uncached_input_tokens"] == 1000
+
+
+async def test_cache_request_counts_cover_filtered_range_not_current_page_or_model_calls(chat):
+    c = chat
+    when = datetime(2026, 9, 20, 8, tzinfo=UTC)
+    async with c.db.transaction() as session:
+        session.add_all(
+            [
+                record(c.a.business.slug, when, cached_input_tokens=50, llm_calls=3),
+                record(c.a.business.slug, when, cached_input_tokens=0, status="send_failed"),
+                record(c.a.business.slug, when, tokens_complete=False, status="failed"),
+                record(c.a.business.slug, when, "admin_chat", cached_input_tokens=20),
+                record(c.a.business.slug, when - timedelta(days=1), cached_input_tokens=30),
+                record(c.b.business.slug, when, cached_input_tokens=90),
+            ]
+        )
+    params = {"start": "2026-09-20", "end": "2026-09-20", "limit": 1, "offset": 1}
+    data = (await c.client.get(endpoint(c.a), params=params, headers=c.a.headers)).json()
+    assert len(data["items"]) == 1
+    assert data["summary"]["replies"] == 4
+    assert data["summary"]["cached_replies"] == 2  # Three model calls still count as one reply.
+    assert data["summary"]["uncached_replies"] == 1
+    assert data["summary"]["cache_incomplete_replies"] == 1
+    filtered = (
+        await c.client.get(
+            endpoint(c.a), params={**params, "channel": "instagram"}, headers=c.a.headers
+        )
+    ).json()["summary"]
+    assert filtered["replies"] == 3
+    assert filtered["cached_replies"] == 1
+    assert filtered["uncached_replies"] == 1
+    assert filtered["cache_incomplete_replies"] == 1
 
 
 def test_context_cache_migration_preserves_historical_usage():

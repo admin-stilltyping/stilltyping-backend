@@ -4,13 +4,51 @@ import logging
 
 from google import genai
 from google.genai import types
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from .schemas import DomainError
 from .usage import UsageCallback, current_usage
 
 log = logging.getLogger(__name__)
+
+
+class GeminiChatModel(ChatGoogleGenerativeAI):
+    """Preserve Gemini 3.8's request contract with the pinned LangChain adapter."""
+
+    def _prepare_request(self, messages, **kwargs):
+        request = super()._prepare_request(messages, **kwargs)
+        if self.model.removeprefix("models/") != "gemini-3.8-flash":
+            return request
+        config = request["config"]
+        for field in ("candidate_count", "temperature", "top_p", "top_k"):
+            setattr(config, field, None)
+        contents = request["contents"]
+        if contents and contents[-1].role == "model":
+            raise ValueError("Gemini 3.8 requires a user message or tool response as the final turn.")
+
+        # The adapter retains provider IDs on AIMessage, but drops them when
+        # rebuilding FunctionCall/FunctionResponse. Keep IDs and signatures
+        # together, including parallel calls and multiple tool rounds.
+        calls = []
+        responses = []
+        for message in messages:
+            if isinstance(message, AIMessage) and message.tool_calls:
+                calls.extend(message.tool_calls)
+                ids = {call["id"] for call in message.tool_calls}
+                responses.extend(
+                    item for item in messages
+                    if isinstance(item, ToolMessage) and item.tool_call_id in ids
+                )
+        call_parts = [p.function_call for c in contents for p in c.parts or [] if p.function_call]
+        result_parts = [
+            p.function_response for c in contents for p in c.parts or [] if p.function_response
+        ]
+        for part, call in zip(call_parts, calls, strict=True):
+            part.id = call["id"]
+        for part, response in zip(result_parts, responses, strict=True):
+            part.id = response.tool_call_id
+        return request
 
 
 def processing_error(exc, message, *, operation="unknown"):
@@ -52,7 +90,7 @@ class Models:
             raise RuntimeError("Set GEMINI_API_KEY in the environment or .env file.")
         key = settings.gemini_api_key.get_secret_value()
         self.cache_credential_fingerprint = hashlib.sha256(key.encode()).hexdigest()
-        self.chat = ChatGoogleGenerativeAI(
+        self.chat = GeminiChatModel(
             model=settings.chat_model,
             api_key=key,
             vertexai=False,

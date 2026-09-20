@@ -70,6 +70,8 @@ async def list_usage(
                         0,
                     ),
                     func.count(case((Usage.cached_input_tokens.is_(None), 1))),
+                    func.count(case((Usage.cached_input_tokens > 0, 1))),
+                    func.count(case((Usage.cached_input_tokens == 0, 1))),
                 ).where(*conditions)
             )
         ).one()
@@ -98,6 +100,8 @@ async def list_usage(
             "cached_input_tokens": totals[6],
             "uncached_input_tokens": totals[7],
             "cache_incomplete_replies": totals[8],
+            "cached_replies": totals[9],
+            "uncached_replies": totals[10],
         },
         "items": [
             {
