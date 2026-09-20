@@ -30,7 +30,7 @@ def record(tenant, when, channel="instagram", **kwargs):
         channel=channel,
         started_at=when,
         completed_at=when + timedelta(seconds=2),
-        duration_ms=2000,
+        duration_ms=kwargs.pop("duration_ms", 2000),
         input_tokens=kwargs.pop("input_tokens", 100),
         output_tokens=20,
         tokens_complete=kwargs.pop("tokens_complete", True),
@@ -93,6 +93,10 @@ async def test_owner_auth_timezone_filters_summary_and_pagination(chat):
         "cache_incomplete_replies": 2,
         "cached_replies": 0,
         "uncached_replies": 0,
+        "average_queue_ms": None,
+        "average_db_ms": None,
+        "average_ai_ms": None,
+        "average_send_ms": None,
     }
     second = (await c.client.get(url, params={**params, "offset": 1}, headers=c.a.headers)).json()
     assert second["next_offset"] is None
@@ -235,24 +239,33 @@ async def test_usage_storage_failure_does_not_break_saved_reply(chat, monkeypatc
     assert current_usage.get() is None
 
 
-def test_usage_migration_matches_model_and_preserves_other_tables():
-    path = Path(__file__).parents[1] / "migrations/versions/014_ai_usage.py"
-    spec = importlib.util.spec_from_file_location("ai_usage_migration", path)
+def load_migration(name):
+    path = Path(__file__).parents[1] / f"migrations/versions/{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
+    return migration
+
+
+def test_usage_migration_matches_model_and_preserves_other_tables():
+    create = load_migration("014_ai_usage")
+    context_cache = load_migration("018_gemini_context_cache")
+    phase_timing = load_migration("019_ai_usage_phase_timing")
     engine = create_engine("sqlite:///:memory:")
     try:
         with engine.begin() as connection:
             connection.execute(text("CREATE TABLE businesses (id INTEGER PRIMARY KEY)"))
             connection.execute(text("INSERT INTO businesses VALUES (1)"))
             with Operations.context(MigrationContext.configure(connection)):
-                migration.upgrade()
+                create.upgrade()
+                context_cache.upgrade()
+                phase_timing.upgrade()
                 actual = {c["name"] for c in inspect(connection).get_columns("ai_usage_records")}
-                assert actual == set(AiUsageRecord.__table__.columns.keys()) - {
-                    "cached_input_tokens"
-                }
+                assert actual == set(AiUsageRecord.__table__.columns.keys())
                 assert len(inspect(connection).get_indexes("ai_usage_records")) == 2
-                migration.downgrade()
+                phase_timing.downgrade()
+                context_cache.downgrade()
+                create.downgrade()
                 assert connection.execute(text("SELECT count(*) FROM businesses")).scalar_one() == 1
                 assert inspect(connection).get_table_names() == ["businesses"]
     finally:
@@ -332,6 +345,7 @@ def test_context_cache_migration_preserves_historical_usage():
         return module
 
     previous, migration = load("014_ai_usage.py"), load("018_gemini_context_cache.py")
+    phase_timing = load("019_ai_usage_phase_timing.py")
     engine = create_engine("sqlite:///:memory:")
     try:
         with (
@@ -347,6 +361,7 @@ def test_context_cache_migration_preserves_historical_usage():
                         1000,100,20,1,1,'completed')""")
             )
             migration.upgrade()
+            phase_timing.upgrade()
             for model in [AiUsageRecord, GeminiContextCache]:
                 actual = {c["name"] for c in inspect(connection).get_columns(model.__tablename__)}
                 assert actual == set(model.__table__.columns.keys())
@@ -356,6 +371,7 @@ def test_context_cache_migration_preserves_historical_usage():
                 ).scalar_one()
                 is None
             )
+            phase_timing.downgrade()
             migration.downgrade()
             assert (
                 connection.execute(text("SELECT input_tokens FROM ai_usage_records")).scalar_one()

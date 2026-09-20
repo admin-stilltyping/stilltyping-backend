@@ -2,6 +2,7 @@
 
 import json
 import re
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from time import perf_counter
@@ -9,6 +10,18 @@ from time import perf_counter
 from langchain_core.callbacks import BaseCallbackHandler
 
 current_usage = ContextVar("request_token_usage", default=None)
+
+
+@contextmanager
+def track_time(attr):
+    """Add wall-clock time spent in the block to the active TokenUsage, if any."""
+    usage = current_usage.get()
+    started = perf_counter() if usage else None
+    try:
+        yield
+    finally:
+        if usage:
+            setattr(usage, attr, getattr(usage, attr) + (perf_counter() - started) * 1000)
 
 
 def response_timing(state):
@@ -31,6 +44,10 @@ class TokenUsage:
     llm_complete: bool = True
     embedding_complete: bool = True
     seen: set = field(default_factory=set)
+    # Wall-clock time inside model calls and tool execution, so a slow reply's
+    # duration_ms can be split from database time without a second contextvar.
+    ai_ms: float = 0.0
+    tool_ms: float = 0.0
 
     def cache_counts(self):
         if not self.cache_complete or not self.llm_complete or self.llm_calls == 0:

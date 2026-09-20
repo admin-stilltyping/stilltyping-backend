@@ -144,6 +144,14 @@ class AiUsageRecord(Base):
     tokens_complete: Mapped[bool] = mapped_column(Boolean)
     llm_calls: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(20))
+    # Phase breakdown of duration_ms, for locating where a slow reply spent its time.
+    # Null on rows written before this instrumentation existed. queue_ms and send_ms
+    # only apply to channel deliveries (webhooks); portal/API calls leave them null.
+    queue_ms: Mapped[float | None] = mapped_column(Float)
+    db_ms: Mapped[float | None] = mapped_column(Float)
+    ai_ms: Mapped[float | None] = mapped_column(Float)
+    tool_ms: Mapped[float | None] = mapped_column(Float)
+    send_ms: Mapped[float | None] = mapped_column(Float)
     __table_args__ = (
         CheckConstraint("status IN ('completed','failed','awaiting_send','send_failed')"),
         CheckConstraint("duration_ms >= 0 AND input_tokens >= 0 AND output_tokens >= 0"),

@@ -17,9 +17,11 @@ from . import conversations, instructions
 from .context_cache import DaytimeContextCache, cache_reference_error
 from .db import AiUsageRecord
 from .models import processing_error
+from .performance import KINDS as DB_TIMING_KINDS
+from .performance import current_timing
 from .schemas import DomainError
 from .tools import SUPPORT, ToolContext, available_tools, execute
-from .usage import TokenUsage, current_usage
+from .usage import TokenUsage, current_usage, track_time
 
 log = logging.getLogger(__name__)
 
@@ -75,7 +77,8 @@ class Agent:
 
     async def retrieve(self, state):
         query = state["request"].message
-        vector = await self.models.query(query)
+        with track_time("ai_ms"):
+            vector = await self.models.query(query)
         async with self.db.transaction(state["tenant"]) as session:
             knowledge = await self.retriever.search(session, state["tenant"], query, vector=vector)
             candidates = await self.retriever.search(
@@ -184,27 +187,31 @@ class Agent:
     async def reason(self, state):
         cache_ref = state.get("cache_ref")
         try:
-            if cache_ref is not None and cache_ref.usable():
-                try:
-                    # Cached system instructions/tools must not be supplied again.
-                    # Only per-request context/history is sent as fresh content.
-                    response = await self.models.chat.ainvoke(
-                        [HumanMessage(content=state["dynamic_context"]), *state["messages"][1:]],
-                        cached_content=cache_ref.name,
-                    )
-                except Exception as exc:
-                    if not cache_reference_error(exc):
-                        raise
-                    await self.context_cache.invalidate(state["tenant"], cache_ref.name)
+            with track_time("ai_ms"):
+                if cache_ref is not None and cache_ref.usable():
+                    try:
+                        # Cached system instructions/tools must not be supplied again.
+                        # Only per-request context/history is sent as fresh content.
+                        response = await self.models.chat.ainvoke(
+                            [
+                                HumanMessage(content=state["dynamic_context"]),
+                                *state["messages"][1:],
+                            ],
+                            cached_content=cache_ref.name,
+                        )
+                    except Exception as exc:
+                        if not cache_reference_error(exc):
+                            raise
+                        await self.context_cache.invalidate(state["tenant"], cache_ref.name)
+                        cache_ref = None
+                        response = await self.models.chat.bind_tools(state["schemas"]).ainvoke(
+                            state["messages"]
+                        )
+                else:
                     cache_ref = None
                     response = await self.models.chat.bind_tools(state["schemas"]).ainvoke(
                         state["messages"]
                     )
-            else:
-                cache_ref = None
-                response = await self.models.chat.bind_tools(state["schemas"]).ainvoke(
-                    state["messages"]
-                )
         except Exception as exc:
             raise processing_error(
                 exc, "Answer generation failed.", operation="answer_generation"
@@ -241,7 +248,8 @@ class Agent:
                 )
                 # Validate/execute through registry, never dynamic code or a URL supplied by the LLM.
                 try:
-                    result = await execute(definition, call["args"], context)
+                    with track_time("tool_ms"):
+                        result = await execute(definition, call["args"], context)
                 except Exception:
                     result = {"ok": False, "error": "Invalid tool arguments."}
                 escalated = escalated or definition.name == SUPPORT.name
@@ -281,19 +289,20 @@ class Agent:
             result = previous[-1]["result"]
         else:
             reason = "The agent could not obtain sufficient supporting evidence."
-            result = await execute(
-                SUPPORT,
-                {"question": state["request"].message, "reason": reason},
-                ToolContext(
-                    state["tenant"],
-                    state["request"].request_id,
-                    "fallback",
-                    self.settings,
-                    db=self.db,
-                    channel=state["request"].channel,
-                    external_user_id=state["request"].external_user_id,
-                ),
-            )
+            with track_time("tool_ms"):
+                result = await execute(
+                    SUPPORT,
+                    {"question": state["request"].message, "reason": reason},
+                    ToolContext(
+                        state["tenant"],
+                        state["request"].request_id,
+                        "fallback",
+                        self.settings,
+                        db=self.db,
+                        channel=state["request"].channel,
+                        external_user_id=state["request"].external_user_id,
+                    ),
+                )
             results.append({"name": SUPPORT.name, "call_id": "fallback", "result": result})
         if result.get("ok") and result.get("ticket_id"):
             answer = (
@@ -334,6 +343,14 @@ class Agent:
             return result
         finally:
             current_usage.reset(token)
+            # The caller (e.g. the webhook processor) may have activated request
+            # timing; read it before the AiUsageRecord insert below adds its own spans.
+            timing = current_timing.get()
+            db_ms = (
+                round(sum(timing.snapshot(perf_counter())[k] for k in DB_TIMING_KINDS), 2)
+                if timing is not None
+                else None
+            )
             if parent is not None:
                 for key in (
                     "input_tokens",
@@ -343,6 +360,8 @@ class Agent:
                     "llm_calls",
                     "embedding_tokens",
                     "embedding_calls",
+                    "ai_ms",
+                    "tool_ms",
                 ):
                     setattr(parent, key, getattr(parent, key) + getattr(usage, key))
                 parent.cache_complete &= usage.cache_complete
@@ -372,6 +391,9 @@ class Agent:
                             tokens_complete=usage.llm_complete and usage.llm_calls > 0,
                             llm_calls=usage.llm_calls,
                             status=status,
+                            db_ms=db_ms,
+                            ai_ms=round(usage.ai_ms, 2),
+                            tool_ms=round(usage.tool_ms, 2),
                         )
                     )
             except Exception as exc:

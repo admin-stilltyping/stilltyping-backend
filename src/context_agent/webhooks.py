@@ -26,6 +26,7 @@ from super_admin.businesses.models import Business
 
 from .channels import ADAPTERS, ChannelNotConfigured
 from .db import AiUsageRecord, ChannelAccount, WebhookEvent
+from .performance import RequestTiming, current_timing
 from .schemas import ChatInput, DomainError
 
 log = logging.getLogger(__name__)
@@ -114,7 +115,7 @@ async def prepare_webhook(services, channel, tenant, raw, account_ref=""):
             session.add(row)
             await session.flush()
             if payload is not None:
-                jobs.append((row.id, payload))
+                jobs.append((row.id, payload, now))
     return jobs
 
 
@@ -158,9 +159,14 @@ def generation_error_code(exc):
 async def process_jobs(services, channel, tenant, config, jobs):
     adapter = ADAPTERS[channel]
     db, agent = services["db"], services["agent"]
-    for event_id, payload in jobs:
+    for event_id, payload, received_at in jobs:
         started = perf_counter()
+        # Scheduling delay between the webhook write and this job actually running,
+        # e.g. background-task backlog or a cold serverless start.
+        queue_ms = round(max(0.0, (datetime.now(UTC) - received_at).total_seconds() * 1000), 2)
         await update_event(db, tenant, event_id, "processing")
+        timing = RequestTiming()
+        timing_token = current_timing.set(timing)
         try:
             result = await agent.run(tenant, payload, await_delivery=True)
         except Exception as exc:
@@ -175,7 +181,10 @@ async def process_jobs(services, channel, tenant, config, jobs):
                 db, tenant, event_id, "failed", started=started, error_code=error_code
             )
             continue
+        finally:
+            current_timing.reset(timing_token)
         error_code = None
+        send_started = perf_counter()
         try:
             await adapter.send(config, payload.external_user_id, result["answer"])
         except Exception as exc:
@@ -183,7 +192,11 @@ async def process_jobs(services, channel, tenant, config, jobs):
             log.error(
                 "webhook_send_failed channel=%s event=%s code=%s", channel, event_id, error_code
             )
-        await finish_delivery(db, tenant, result.get("usage_id"), started, error_code is None)
+        send_ms = round((perf_counter() - send_started) * 1000, 2)
+        await finish_delivery(
+            db, tenant, result.get("usage_id"), started, error_code is None,
+            queue_ms=queue_ms, send_ms=send_ms,
+        )
         await update_event(
             db,
             tenant,
@@ -200,7 +213,7 @@ async def process_webhook(services, channel, tenant, config, raw):
     await process_jobs(services, channel, tenant, config, jobs)
 
 
-async def finish_delivery(db, tenant, usage_id, started, sent):
+async def finish_delivery(db, tenant, usage_id, started, sent, *, queue_ms=None, send_ms=None):
     if usage_id is None:
         return
     try:
@@ -211,6 +224,8 @@ async def finish_delivery(db, tenant, usage_id, started, sent):
                     row.status = "completed" if sent else "send_failed"
                 row.completed_at = datetime.now(UTC)
                 row.duration_ms = round((perf_counter() - started) * 1000, 2)
+                row.queue_ms = queue_ms
+                row.send_ms = send_ms
     except Exception as exc:
         log.error("ai_usage_delivery_save_failed tenant=%s error=%s", tenant, type(exc).__name__)
 

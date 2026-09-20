@@ -50,6 +50,7 @@ from .schemas import (
     TicketUpdate,
     UpdateInput,
 )
+from .super_admin_timing import router as super_admin_timing_router
 from .usage import UsageMiddleware, response_timing
 from .vectors import Vectors
 from .webhooks import register_webhooks
@@ -108,6 +109,7 @@ def create_app(services=None):
     app.include_router(portal_chat_router)
     app.include_router(ai_usage_router)
     app.include_router(portal_webhooks_router)
+    app.include_router(super_admin_timing_router)
     app.include_router(performance_router)
     app.include_router(notification_router)
 

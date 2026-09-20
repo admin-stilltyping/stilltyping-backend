@@ -72,6 +72,10 @@ async def list_usage(
                     func.count(case((Usage.cached_input_tokens.is_(None), 1))),
                     func.count(case((Usage.cached_input_tokens > 0, 1))),
                     func.count(case((Usage.cached_input_tokens == 0, 1))),
+                    func.avg(Usage.queue_ms),
+                    func.avg(Usage.db_ms),
+                    func.avg(Usage.ai_ms),
+                    func.avg(Usage.send_ms),
                 ).where(*conditions)
             )
         ).one()
@@ -102,6 +106,10 @@ async def list_usage(
             "cache_incomplete_replies": totals[8],
             "cached_replies": totals[9],
             "uncached_replies": totals[10],
+            "average_queue_ms": totals[11],
+            "average_db_ms": totals[12],
+            "average_ai_ms": totals[13],
+            "average_send_ms": totals[14],
         },
         "items": [
             {
@@ -122,6 +130,13 @@ async def list_usage(
                 "llm_calls": row.llm_calls,
                 "tokens_complete": row.tokens_complete,
                 "status": row.status,
+                # Phase breakdown of duration_ms; null on rows recorded before this
+                # instrumentation existed, or when a phase does not apply.
+                "queue_ms": row.queue_ms,
+                "db_ms": row.db_ms,
+                "ai_ms": row.ai_ms,
+                "tool_ms": row.tool_ms,
+                "send_ms": row.send_ms,
             }
             for row in rows
         ],
