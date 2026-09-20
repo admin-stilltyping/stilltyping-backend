@@ -296,3 +296,7 @@ Migration 018 stores only cache metadata and a short creation lease in PostgreSQ
 Gemini enforces its model-specific minimum cache size. Rejected configurations (including content below that minimum) use ordinary requests and are not retried until the configuration changes or the next day. Transient creation failures back off for five minutes. Cache operations have short timeouts; generation falls back once for a rejected/expired cache reference, but does not blindly retry generation timeouts, quota failures or server errors. Setting `GEMINI_CACHE_ENABLED=false` disables explicit cache use/creation; existing provider caches expire at their scheduled time.
 
 AI Usage reports cached and uncached input counts from provider metadata, across all model rounds. Cached tokens are already included in total input tokens. Historical rows and responses lacking cache metadata remain unknown rather than being shown as zero. These counters are not a bill: cache creation/storage, output and fresh input are charged separately, and implicit cache hits can also contribute to cached input counts.
+
+### Request timing breakdown
+
+Migration 019 adds `queue_ms`, `db_ms`, `ai_ms`, `tool_ms`, and `send_ms` to `ai_usage_records`, splitting `duration_ms` into queueing, database, model/tool, and channel-send time for locating slow replies. Super-admins can read the cross-tenant breakdown at `GET /super-admin/request-timing`.
