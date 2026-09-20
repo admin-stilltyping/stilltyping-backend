@@ -88,6 +88,9 @@ async def test_owner_auth_timezone_filters_summary_and_pagination(chat):
         "incomplete_replies": 1,
         "failed_replies": 1,
         "average_duration_ms": 2000,
+        "cached_input_tokens": 0,
+        "uncached_input_tokens": 0,
+        "cache_incomplete_replies": 2,
     }
     second = (await c.client.get(url, params={**params, "offset": 1}, headers=c.a.headers)).json()
     assert second["next_offset"] is None
@@ -240,10 +243,85 @@ def test_usage_migration_matches_model_and_preserves_other_tables():
             with Operations.context(MigrationContext.configure(connection)):
                 migration.upgrade()
                 actual = {c["name"] for c in inspect(connection).get_columns("ai_usage_records")}
-                assert actual == set(AiUsageRecord.__table__.columns.keys())
+                assert actual == set(AiUsageRecord.__table__.columns.keys()) - {
+                    "cached_input_tokens"
+                }
                 assert len(inspect(connection).get_indexes("ai_usage_records")) == 2
                 migration.downgrade()
                 assert connection.execute(text("SELECT count(*) FROM businesses")).scalar_one() == 1
                 assert inspect(connection).get_table_names() == ["businesses"]
+    finally:
+        engine.dispose()
+
+
+async def test_cache_breakdown_distinguishes_historical_unknowns_and_tenants(chat):
+    c = chat
+    when = datetime(2026, 9, 20, 8, tzinfo=UTC)
+    async with c.db.transaction() as session:
+        session.add_all(
+            [
+                record(c.a.business.slug, when, input_tokens=6000, cached_input_tokens=5000),
+                record(c.a.business.slug, when, input_tokens=100, cached_input_tokens=0),
+                record(c.a.business.slug, when, input_tokens=700),
+                record(c.b.business.slug, when, input_tokens=9000, cached_input_tokens=8000),
+            ]
+        )
+    data = (
+        await c.client.get(
+            endpoint(c.a), headers=c.a.headers, params={"start": "2026-09-20", "end": "2026-09-20"}
+        )
+    ).json()
+    assert data["summary"]["input_tokens"] == 6800
+    assert data["summary"]["cached_input_tokens"] == 5000
+    assert data["summary"]["uncached_input_tokens"] == 1100
+    assert data["summary"]["cache_incomplete_replies"] == 1
+    historical = next(row for row in data["items"] if row["input_tokens"] == 700)
+    assert historical["cached_input_tokens"] is None
+    assert historical["uncached_input_tokens"] is None
+    known = next(row for row in data["items"] if row["input_tokens"] == 6000)
+    assert known["cached_input_tokens"] == 5000 and known["uncached_input_tokens"] == 1000
+
+
+def test_context_cache_migration_preserves_historical_usage():
+    from context_agent.db import GeminiContextCache
+
+    def load(name):
+        path = Path(__file__).parents[1] / "migrations/versions" / name
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    previous, migration = load("014_ai_usage.py"), load("018_gemini_context_cache.py")
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with (
+            engine.begin() as connection,
+            Operations.context(MigrationContext.configure(connection)),
+        ):
+            previous.upgrade()
+            connection.execute(
+                text("""INSERT INTO ai_usage_records
+                (id,tenant_id,request_id,channel,started_at,completed_at,duration_ms,
+                 input_tokens,output_tokens,tokens_complete,llm_calls,status)
+                VALUES ('old','dental','request','instagram','2026-09-20','2026-09-20',
+                        1000,100,20,1,1,'completed')""")
+            )
+            migration.upgrade()
+            for model in [AiUsageRecord, GeminiContextCache]:
+                actual = {c["name"] for c in inspect(connection).get_columns(model.__tablename__)}
+                assert actual == set(model.__table__.columns.keys())
+            assert (
+                connection.execute(
+                    text("SELECT cached_input_tokens FROM ai_usage_records")
+                ).scalar_one()
+                is None
+            )
+            migration.downgrade()
+            assert (
+                connection.execute(text("SELECT input_tokens FROM ai_usage_records")).scalar_one()
+                == 100
+            )
+            assert "gemini_context_caches" not in inspect(connection).get_table_names()
     finally:
         engine.dispose()

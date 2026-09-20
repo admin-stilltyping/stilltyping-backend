@@ -57,6 +57,19 @@ async def list_usage(
                     func.count(case((Usage.tokens_complete.is_(False), 1))),
                     func.avg(case((Usage.status == "completed", Usage.duration_ms))),
                     func.count(case((Usage.status.in_(["failed", "send_failed"]), 1))),
+                    func.coalesce(func.sum(Usage.cached_input_tokens), 0),
+                    func.coalesce(
+                        func.sum(
+                            case(
+                                (
+                                    Usage.cached_input_tokens.is_not(None),
+                                    Usage.input_tokens - Usage.cached_input_tokens,
+                                )
+                            )
+                        ),
+                        0,
+                    ),
+                    func.count(case((Usage.cached_input_tokens.is_(None), 1))),
                 ).where(*conditions)
             )
         ).one()
@@ -82,6 +95,9 @@ async def list_usage(
             "incomplete_replies": totals[3],
             "average_duration_ms": totals[4],
             "failed_replies": totals[5],
+            "cached_input_tokens": totals[6],
+            "uncached_input_tokens": totals[7],
+            "cache_incomplete_replies": totals[8],
         },
         "items": [
             {
@@ -93,6 +109,13 @@ async def list_usage(
                 "duration_ms": row.duration_ms,
                 "input_tokens": row.input_tokens,
                 "output_tokens": row.output_tokens,
+                "cached_input_tokens": row.cached_input_tokens,
+                "uncached_input_tokens": (
+                    row.input_tokens - row.cached_input_tokens
+                    if row.cached_input_tokens is not None
+                    else None
+                ),
+                "llm_calls": row.llm_calls,
                 "tokens_complete": row.tokens_complete,
                 "status": row.status,
             }

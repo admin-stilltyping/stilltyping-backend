@@ -91,3 +91,24 @@ async def test_embedding_without_metadata_is_unknown(monkeypatch):
     finally:
         current_usage.reset(token)
         await models.close()
+
+
+def test_cache_tokens_sum_across_rounds_without_double_counting_total():
+    usage = TokenUsage()
+    token = current_usage.set(usage)
+    try:
+        callback = UsageCallback()
+        for inputs, cached in [(6000, 5000), (6500, 5000), (200, 0)]:
+            response = result(inputs, 20)
+            response.generations[0][0].message.usage_metadata["input_token_details"] = {
+                "cache_read": cached
+            }
+            callback.on_llm_end(response, run_id=uuid4())
+        assert usage.input_tokens == 12700
+        assert usage.cache_counts() == (10000, 2700)
+        assert usage.as_dict()["llm"]["cached_input_tokens"] == 10000
+        # Missing metadata in any round makes the breakdown unknown, not zero.
+        callback.on_llm_end(result(100, 10), run_id=uuid4())
+        assert usage.cache_counts() == (None, None)
+    finally:
+        current_usage.reset(token)

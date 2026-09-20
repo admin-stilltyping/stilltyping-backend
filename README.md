@@ -286,3 +286,13 @@ message is logged as an ignored legacy duplicate. No historic ownership or outco
 is inferred. Processing remains in the existing background-task mechanism: a worker
 interruption can leave an event at Received or Processing without a final outcome.
 This page does not automatically retry or manually replay messages.
+
+### Daytime Gemini context cache
+
+`GEMINI_CACHE_ENABLED=true` enables best-effort explicit caching of the agent's business instructions, system rules and current tool schemas. The first eligible request between `GEMINI_CACHE_START_HOUR=10` and `GEMINI_CACHE_END_HOUR=22` creates a cache that expires at the end hour on the same business-local day (Asia/Kolkata if no business timezone exists). There is no overnight creation or scheduled warm-up. Retrieved knowledge, the current time, customer history and the new message remain fresh on every request; the knowledge base stays in RAG.
+
+Migration 018 stores only cache metadata and a short creation lease in PostgreSQL, so serverless workers share a cache without holding a database connection during provider calls. Cache identity includes tenant, credential fingerprint, model, instructions, tool schemas and schedule. Changed configurations replace the cached context; provider deletion is best-effort, and every cache has a fixed daily expiry. Concurrent requests that encounter another worker's creation lease proceed normally without creating another cache.
+
+Gemini enforces its model-specific minimum cache size. Rejected configurations (including content below that minimum) use ordinary requests and are not retried until the configuration changes or the next day. Transient creation failures back off for five minutes. Cache operations have short timeouts; generation falls back once for a rejected/expired cache reference, but does not blindly retry generation timeouts, quota failures or server errors. Setting `GEMINI_CACHE_ENABLED=false` disables explicit cache use/creation; existing provider caches expire at their scheduled time.
+
+AI Usage reports cached and uncached input counts from provider metadata, across all model rounds. Cached tokens are already included in total input tokens. Historical rows and responses lacking cache metadata remain unknown rather than being shown as zero. These counters are not a bill: cache creation/storage, output and fresh input are charged separately, and implicit cache hits can also contribute to cached input counts.

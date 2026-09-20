@@ -17,6 +17,9 @@ class Settings(SuperAdminSettings):
     gemini_api_key: SecretStr | None = None
     integration_encryption_key: SecretStr | None = None
     chat_model: str = "gemini-3.5-flash"
+    gemini_cache_enabled: bool = True
+    gemini_cache_start_hour: int = Field(default=10, ge=0, le=23)
+    gemini_cache_end_hour: int = Field(default=22, ge=1, le=24)
     embedding_model: str = "gemini-embedding-2"
     embedding_dimensions: int = Field(default=3072, gt=0)
     index_prefix: str = "agent_gemini_embedding_2_3072"
@@ -31,6 +34,12 @@ class Settings(SuperAdminSettings):
     support_webhook_token: SecretStr | None = None
     push_vapid_private_key: SecretStr | None = None
     push_vapid_subject: str = ""
+
+    @model_validator(mode="after")
+    def cache_hours(self):
+        if self.gemini_cache_start_hour >= self.gemini_cache_end_hour:
+            raise ValueError("Gemini cache start hour must be before its end hour")
+        return self
 
     @model_validator(mode="after")
     def database_pooler(self):

@@ -112,6 +112,20 @@ class Message(TimestampMixin, Base):
     )
 
 
+class GeminiContextCache(Base):
+    """One current provider cache per tenant; no prompt text or credentials are stored."""
+
+    __tablename__ = "gemini_context_caches"
+    tenant_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    cache_name: Mapped[str | None] = mapped_column(String(300))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    token_count: Mapped[int | None] = mapped_column(Integer)
+    lease_owner: Mapped[UUID | None] = mapped_column(Uuid)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retry_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class AiUsageRecord(Base):
     """One actual agent invocation, including all model/tool rounds."""
 
@@ -126,6 +140,7 @@ class AiUsageRecord(Base):
     duration_ms: Mapped[float] = mapped_column(Float)
     input_tokens: Mapped[int] = mapped_column(Integer)
     output_tokens: Mapped[int] = mapped_column(Integer)
+    cached_input_tokens: Mapped[int | None] = mapped_column(Integer)
     tokens_complete: Mapped[bool] = mapped_column(Boolean)
     llm_calls: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(20))

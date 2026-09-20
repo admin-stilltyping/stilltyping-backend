@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 
@@ -19,9 +20,7 @@ def processing_error(exc, message, *, operation="unknown"):
         seen.add(id(current))
         code = getattr(current, "code", None)
         if code in (401, 403, 429, 503):
-            log.warning(
-                "Gemini request failed: operation=%s provider_status=%s", operation, code
-            )
+            log.warning("Gemini request failed: operation=%s provider_status=%s", operation, code)
             if code == 429:
                 return DomainError(
                     503,
@@ -52,6 +51,7 @@ class Models:
         if not settings.gemini_api_key or not settings.gemini_api_key.get_secret_value():
             raise RuntimeError("Set GEMINI_API_KEY in the environment or .env file.")
         key = settings.gemini_api_key.get_secret_value()
+        self.cache_credential_fingerprint = hashlib.sha256(key.encode()).hexdigest()
         self.chat = ChatGoogleGenerativeAI(
             model=settings.chat_model,
             api_key=key,
@@ -68,6 +68,33 @@ class Models:
             http_options=types.HttpOptions(
                 timeout=int(settings.request_timeout * 1000),
                 retry_options=types.HttpRetryOptions(attempts=3),
+            ),
+        )
+
+    async def create_context_cache(self, instruction, schemas, expires_at):
+        # Use the same schema conversion as ordinary LangChain generations.
+        tools = self.chat._format_tools(schemas, None)
+        return await self.embeddings.aio.caches.create(
+            model=self.chat.model,
+            config=types.CreateCachedContentConfig(
+                system_instruction=instruction,
+                tools=tools or None,
+                expire_time=expires_at,
+                http_options=types.HttpOptions(
+                    timeout=8000,
+                    retry_options=types.HttpRetryOptions(attempts=1),
+                ),
+            ),
+        )
+
+    async def delete_context_cache(self, name):
+        await self.embeddings.aio.caches.delete(
+            name=name,
+            config=types.DeleteCachedContentConfig(
+                http_options=types.HttpOptions(
+                    timeout=2000,
+                    retry_options=types.HttpRetryOptions(attempts=1),
+                )
             ),
         )
 

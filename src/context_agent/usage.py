@@ -21,6 +21,8 @@ def response_timing(state):
 @dataclass
 class TokenUsage:
     input_tokens: int = 0
+    cached_input_tokens: int = 0
+    cache_complete: bool = True
     output_tokens: int = 0
     llm_total: int = 0
     llm_calls: int = 0
@@ -30,6 +32,11 @@ class TokenUsage:
     embedding_complete: bool = True
     seen: set = field(default_factory=set)
 
+    def cache_counts(self):
+        if not self.cache_complete or not self.llm_complete or self.llm_calls == 0:
+            return None, None
+        return self.cached_input_tokens, self.input_tokens - self.cached_input_tokens
+
     def as_dict(self):
         complete = self.llm_complete and self.embedding_complete
         known = self.llm_total + self.embedding_tokens
@@ -37,6 +44,8 @@ class TokenUsage:
             "llm": {
                 "calls": self.llm_calls,
                 "input_tokens": self.input_tokens,
+                "cached_input_tokens": self.cache_counts()[0],
+                "uncached_input_tokens": self.cache_counts()[1],
                 "output_tokens": self.output_tokens,
                 "total_tokens": self.llm_total,
                 "complete": self.llm_complete,
@@ -69,6 +78,11 @@ class UsageCallback(BaseCallbackHandler):
             if not metadata:
                 usage.llm_complete = False
                 continue
+            cached = (metadata.get("input_token_details") or {}).get("cache_read")
+            if isinstance(cached, int) and 0 <= cached <= metadata["input_tokens"]:
+                usage.cached_input_tokens += cached
+            else:
+                usage.cache_complete = False
             usage.input_tokens += metadata["input_tokens"]
             usage.output_tokens += metadata["output_tokens"]
             usage.llm_total += metadata["total_tokens"]
