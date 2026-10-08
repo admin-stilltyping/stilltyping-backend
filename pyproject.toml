@@ -20,6 +20,7 @@ dependencies = [
  "pyjwt>=2.10,<3",
  "pywebpush>=2.0,<3",
  "cryptography>=50,<51",
+ "langchain-openai>=1,<2",
 ]
 [dependency-groups]
 dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "ruff>=0.11,<1", "aiosqlite>=0.21,<1"]

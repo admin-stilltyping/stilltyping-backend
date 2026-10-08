@@ -4,6 +4,7 @@ from functools import wraps
 from qdrant_client import AsyncQdrantClient, models
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 
+from .db import content_hash
 from .schemas import DomainError
 
 
@@ -56,11 +57,36 @@ class Vectors:
                 self.collection(kind),
                 points=[
                     models.PointStruct(
-                        id=str(row.id), vector=vector, payload={"tenant_id": row.tenant_id}
+                        id=str(row.id),
+                        vector=vector,
+                        payload={
+                            "tenant_id": row.tenant_id,
+                            "content_hash": content_hash(row.name, row.description)
+                            if kind == "tools" and hasattr(row, "name")
+                            else None,
+                        },
                     )
                     for row, vector in zip(rows, embeddings, strict=True)
                 ],
                 wait=True,
+            )
+
+    async def sync_scoped_tools(self, rows, embedder):
+        # Code-defined tools can change after an embedding index is created.
+        if not rows:
+            return
+        points = await self.client.retrieve(
+            self.collection("tools"), ids=[str(row.id) for row in rows], with_payload=True
+        )
+        hashes = {str(p.id): (p.payload or {}).get("content_hash") for p in points}
+        from .db import embedding_text
+
+        changed = [r for r in rows if hashes.get(str(r.id)) != content_hash(r.name, r.description)]
+        if changed:
+            await self.upsert(
+                "tools",
+                changed,
+                await embedder.embed([embedding_text(r.name, r.description) for r in changed]),
             )
 
     @storage_errors

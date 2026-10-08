@@ -20,6 +20,21 @@ class KnowledgeService:
     def __init__(self, db, models, vectors, retriever):
         self.db, self.models, self.vectors, self.retriever = db, models, vectors, retriever
 
+    async def check_index(self, session, tenant):
+        # A save that started before an embedding switch must not commit into an old index.
+        from integrations.models import BusinessAISettings
+        from super_admin.businesses.models import Business
+
+        row = await session.scalar(
+            select(BusinessAISettings)
+            .join(Business, Business.id == BusinessAISettings.business_id)
+            .where(Business.slug == tenant)
+        )
+        if row is not None and row.index_prefix != getattr(self.vectors, "prefix", None):
+            raise DomainError(
+                409, "ai_settings_changed", "AI settings changed. Retry the knowledge update."
+            )
+
     async def extract(self, text):
         result = await self.models.structured(Extraction, EXTRACT, {"source": text})
         if result.clarification or not result.units:
@@ -46,6 +61,7 @@ class KnowledgeService:
     async def put(self, tenant, payload, *, expected_revision=None):
         if expected_revision is not None:
             async with self.db.transaction(tenant) as session:
+                await self.check_index(session, tenant)
                 await check_document_revision(session, tenant, expected_revision)
         drafts = await self.extract(payload.summary)
         embeddings = await self.models.embed([embedding_text(x.title, x.content) for x in drafts])
@@ -53,6 +69,7 @@ class KnowledgeService:
         old_ids = []
         try:
             async with self.db.transaction(tenant) as session:
+                await self.check_index(session, tenant)
                 # Recheck after model work: another editor or legacy API may have saved meanwhile.
                 await check_document_revision(session, tenant, expected_revision)
                 doc = await session.scalar(select(Document).where(Document.tenant_id == tenant))
@@ -106,6 +123,7 @@ class KnowledgeService:
 
     async def add(self, tenant, payload):
         async with self.db.transaction(tenant) as session:
+            await self.check_index(session, tenant)
             doc = await self.document(session, tenant)
             drafts = await self.extract(payload.content)
             vectors = await self.models.embed([embedding_text(x.title, x.content) for x in drafts])
@@ -130,6 +148,7 @@ class KnowledgeService:
 
     async def update(self, tenant, payload):
         async with self.db.transaction(tenant) as session:
+            await self.check_index(session, tenant)
             doc = await self.document(session, tenant)
             rows = await self.retriever.search(
                 session, tenant, payload.change, limit=self.retriever.settings.candidate_limit
@@ -188,6 +207,7 @@ class KnowledgeService:
             ids = [x.id for x in edits]
         # A second locked transaction rechecks content to avoid publishing a stale concurrent edit.
         async with self.db.transaction(tenant) as session:
+            await self.check_index(session, tenant)
             current = list(
                 (
                     await session.scalars(

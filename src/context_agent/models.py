@@ -6,6 +6,8 @@ from google import genai
 from google.genai import types
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
+from openai import AsyncOpenAI
 
 from .schemas import DomainError
 from .usage import UsageCallback, current_usage
@@ -25,7 +27,9 @@ class GeminiChatModel(ChatGoogleGenerativeAI):
             setattr(config, field, None)
         contents = request["contents"]
         if contents and contents[-1].role == "model":
-            raise ValueError("Gemini 3.8 requires a user message or tool response as the final turn.")
+            raise ValueError(
+                "Gemini 3.8 requires a user message or tool response as the final turn."
+            )
 
         # The adapter retains provider IDs on AIMessage, but drops them when
         # rebuilding FunctionCall/FunctionResponse. Keep IDs and signatures
@@ -37,7 +41,8 @@ class GeminiChatModel(ChatGoogleGenerativeAI):
                 calls.extend(message.tool_calls)
                 ids = {call["id"] for call in message.tool_calls}
                 responses.extend(
-                    item for item in messages
+                    item
+                    for item in messages
                     if isinstance(item, ToolMessage) and item.tool_call_id in ids
                 )
         call_parts = [p.function_call for c in contents for p in c.parts or [] if p.function_call]
@@ -56,26 +61,26 @@ def processing_error(exc, message, *, operation="unknown"):
     seen = set()
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        code = getattr(current, "code", None)
+        code = getattr(current, "status_code", None) or getattr(current, "code", None)
         if code in (401, 403, 429, 503):
-            log.warning("Gemini request failed: operation=%s provider_status=%s", operation, code)
+            log.warning("Model request failed: operation=%s provider_status=%s", operation, code)
             if code == 429:
                 return DomainError(
                     503,
                     "model_rate_limited",
-                    "Gemini rejected the request because of a rate or quota limit (HTTP 429). "
-                    "Check the key's project usage and limits in Google AI Studio.",
+                    "The AI provider rejected the request because of a rate or quota limit (HTTP 429). "
+                    "Check the provider account usage and limits.",
                 )
             if code in (401, 403):
                 return DomainError(
                     503,
                     "model_authorization_failed",
-                    "Gemini rejected access. Check the API key and its permissions in Integrations.",
+                    "The AI provider rejected access. Check the API key and its permissions in Integrations.",
                 )
             return DomainError(
                 503,
                 "model_unavailable",
-                "Gemini is temporarily unavailable (HTTP 503). Try again later.",
+                "The AI provider is temporarily unavailable (HTTP 503). Try again later.",
             )
         current = current.__cause__
     log.warning(
@@ -86,33 +91,72 @@ def processing_error(exc, message, *, operation="unknown"):
 
 class Models:
     def __init__(self, settings):
-        if not settings.gemini_api_key or not settings.gemini_api_key.get_secret_value():
-            raise RuntimeError("Set GEMINI_API_KEY in the environment or .env file.")
-        key = settings.gemini_api_key.get_secret_value()
-        self.cache_credential_fingerprint = hashlib.sha256(key.encode()).hexdigest()
-        self.chat = GeminiChatModel(
-            model=settings.chat_model,
-            api_key=key,
-            vertexai=False,
-            timeout=settings.request_timeout,
-            max_retries=2,
-            callbacks=[UsageCallback()],
-        )
+        llm_secret = settings.llm_api_key or settings.gemini_api_key
+        embedding_secret = settings.embedding_api_key or settings.gemini_api_key
+        if not llm_secret or not embedding_secret:
+            raise RuntimeError(
+                "Set GEMINI_API_KEY or configure both LLM and embedding credentials."
+            )
+        key = llm_secret.get_secret_value()
+        embedding_key = embedding_secret.get_secret_value()
+        self.embedding_provider = settings.embedding_provider
+        self.llm_provider = settings.llm_provider
         self.embedding_model = settings.embedding_model
         self.dimensions = settings.embedding_dimensions
-        self.embeddings = genai.Client(
-            api_key=key,
-            vertexai=False,
-            http_options=types.HttpOptions(
-                timeout=int(settings.request_timeout * 1000),
-                retry_options=types.HttpRetryOptions(attempts=3),
-            ),
-        )
+        if self.llm_provider == "gemini":
+            self.cache_credential_fingerprint = hashlib.sha256(key.encode()).hexdigest()
+            self.chat = GeminiChatModel(
+                model=settings.chat_model,
+                api_key=key,
+                vertexai=False,
+                timeout=settings.request_timeout,
+                max_retries=2,
+                callbacks=[UsageCallback()],
+            )
+        else:
+            self.chat = ChatOpenAI(
+                model=settings.chat_model,
+                api_key=key,
+                base_url=(
+                    "https://api.deepinfra.com/v1/openai"
+                    if self.llm_provider == "deepinfra"
+                    else "https://api.deepseek.com"
+                ),
+                timeout=settings.request_timeout,
+                max_retries=2,
+                callbacks=[UsageCallback()],
+                extra_body={"thinking": {"type": "disabled"}}
+                if self.llm_provider == "deepseek"
+                else None,
+            )
+        if self.embedding_provider == "gemini":
+            self.embeddings = genai.Client(
+                api_key=embedding_key,
+                vertexai=False,
+                http_options=types.HttpOptions(
+                    timeout=int(settings.request_timeout * 1000),
+                    retry_options=types.HttpRetryOptions(attempts=3),
+                ),
+            )
+        else:
+            self.embeddings = AsyncOpenAI(
+                api_key=embedding_key,
+                base_url="https://api.deepinfra.com/v1/openai",
+                timeout=settings.request_timeout,
+                max_retries=2,
+            )
+        self.cache_client = None
+        if self.llm_provider == "gemini":
+            self.cache_client = (
+                self.embeddings
+                if self.embedding_provider == "gemini" and key == embedding_key
+                else genai.Client(api_key=key, vertexai=False)
+            )
 
     async def create_context_cache(self, instruction, schemas, expires_at):
         # Use the same schema conversion as ordinary LangChain generations.
         tools = self.chat._format_tools(schemas, None)
-        return await self.embeddings.aio.caches.create(
+        return await self.cache_client.aio.caches.create(
             model=self.chat.model,
             config=types.CreateCachedContentConfig(
                 system_instruction=instruction,
@@ -126,7 +170,7 @@ class Models:
         )
 
     async def delete_context_cache(self, name):
-        await self.embeddings.aio.caches.delete(
+        await self.cache_client.aio.caches.delete(
             name=name,
             config=types.DeleteCachedContentConfig(
                 http_options=types.HttpOptions(
@@ -142,6 +186,23 @@ class Models:
         if usage is not None:
             usage.embedding_calls += 1
         try:
+            if self.embedding_provider == "deepinfra":
+                response = await self.embeddings.embeddings.create(
+                    model=self.embedding_model,
+                    input=[text],
+                    dimensions=self.dimensions,
+                    encoding_format="float",
+                )
+                if usage is not None:
+                    count = getattr(response.usage, "prompt_tokens", None)
+                    if count is None:
+                        usage.embedding_complete = False
+                    else:
+                        usage.embedding_tokens += count
+                vector = response.data[0].embedding
+                if len(vector) != self.dimensions:
+                    raise ValueError("Embedding dimensions do not match the vector index")
+                return vector
             response = await self.embeddings.aio.models.embed_content(
                 model=self.embedding_model,
                 contents=text,
@@ -168,15 +229,26 @@ class Models:
         return vector
 
     async def close(self):
-        try:
+        if self.llm_provider == "gemini":
             await self.chat.aclose()
-        finally:
+        else:
+            await self.chat.root_async_client.close()
+            self.chat.root_client.close()
+        if self.embedding_provider == "gemini":
             await self.embeddings.aio.aclose()
             self.embeddings.close()
+        else:
+            await self.embeddings.close()
+        if self.cache_client is not None and self.cache_client is not self.embeddings:
+            await self.cache_client.aio.aclose()
+            self.cache_client.close()
 
     async def structured(self, schema, instruction: str, data):
         try:
-            result = await self.chat.with_structured_output(schema, method="json_schema").ainvoke(
+            result = await self.chat.with_structured_output(
+                schema,
+                method="json_schema" if self.llm_provider == "gemini" else "function_calling",
+            ).ainvoke(
                 [
                     SystemMessage(content=instruction),
                     HumanMessage(content=json.dumps(data, ensure_ascii=False, default=str)),
@@ -192,7 +264,12 @@ class Models:
         if not texts:
             return []
         try:
-            return [await self._embed_one(f"title: none | text: {text}") for text in texts]
+            return [
+                await self._embed_one(
+                    f"title: none | text: {text}" if self.embedding_provider == "gemini" else text
+                )
+                for text in texts
+            ]
         except Exception as exc:
             raise processing_error(
                 exc, "Embedding generation failed.", operation="document_embedding"
@@ -200,7 +277,12 @@ class Models:
 
     async def query(self, text: str):
         try:
-            return await self._embed_one(f"task: search result | query: {text}")
+            query = (
+                f"task: search result | query: {text}"
+                if self.embedding_provider == "gemini"
+                else f"Instruct: Retrieve relevant business knowledge or tools for the query.\nQuery: {text}"
+            )
+            return await self._embed_one(query)
         except Exception as exc:
             raise processing_error(
                 exc, "Query embedding failed.", operation="query_embedding"

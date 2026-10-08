@@ -16,6 +16,10 @@ class Settings(SuperAdminSettings):
     qdrant_api_key: SecretStr | None = None
     gemini_api_key: SecretStr | None = None
     integration_encryption_key: SecretStr | None = None
+    llm_provider: str = "gemini"
+    llm_api_key: SecretStr | None = None
+    embedding_provider: str = "gemini"
+    embedding_api_key: SecretStr | None = None
     chat_model: str = "gemini-3.8-flash"
     gemini_cache_enabled: bool = True
     gemini_cache_start_hour: int = Field(default=10, ge=0, le=23)

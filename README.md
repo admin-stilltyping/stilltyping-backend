@@ -300,3 +300,48 @@ AI Usage reports cached and uncached input counts from provider metadata, across
 ### Request timing breakdown
 
 Migration 019 adds `queue_ms`, `db_ms`, `ai_ms`, `tool_ms`, and `send_ms` to `ai_usage_records`, splitting `duration_ms` into queueing, database, model/tool, and channel-send time for locating slow replies. Super-admins can read the cross-tenant breakdown at `GET /super-admin/request-timing`.
+
+## Per-business AI settings
+
+Super-admins can use `GET` / `PUT /super-admin/businesses/{slug}/ai-settings`
+(or Business detail → AI models and API keys in the admin portal) to configure:
+
+- LLM: Gemini or DeepSeek, model ID and API key.
+- Embeddings: Gemini or DeepInfra Qwen, model ID, dimensions and API key.
+- Minimum relevance score, to evaluate and tune for the selected embedding model.
+
+Apply migration `020` before deploying this feature. `INTEGRATION_ENCRYPTION_KEY`
+must contain a persistent Fernet key; preserve it across deployments. Keys are
+encrypted and bound to the business. Responses expose only the final four
+characters. Only authenticated super-admins can read/update this configuration.
+Existing businesses inherit their current Gemini settings until explicitly saved.
+A blank API-key field retains the same provider's key; switching providers requires
+a new key. The old business Gemini integration becomes read-only while these
+settings are managed by the super-admin.
+
+Saving verifies LLM model metadata and makes a small billable embedding request.
+DeepSeek runs with thinking disabled and uses tool-based structured extraction.
+Gemini caching uses the LLM key, independently of the embedding provider/key.
+No new provider credentials are included in source code or environment examples.
+
+An embedding provider, model or dimension change builds a new isolated collection
+pair for this business, including its knowledge and applicable code-defined tools.
+The old configuration remains active until preparation succeeds. Activation checks
+both configuration revision and source data again; concurrent edits return 409.
+In-flight knowledge writes using the old index are rejected and can be retried.
+LLM-only changes and key rotations retain the existing index. Code tool changes
+are refreshed in custom indexes when tool retrieval runs.
+
+Preparation is synchronous and limited to 150 seconds. Larger datasets may need
+an offline migration workflow; a timeout does not activate the new settings.
+Provider usage is billable even if a preparation attempt fails. Old/staged indexes
+are retained for safety; remove unused collections only after confirming no active
+configuration references them and in-flight requests have drained. No runtime
+fallback silently sends content to another provider. Validate actual English,
+Tanglish, extraction and tool-call behavior with your own provider keys before
+switching customers. The 0.60 score is a starting point, not a portable accuracy guarantee.
+
+DeepInfra is also supported as an LLM provider (`llm_provider: deepinfra`).
+Use its full catalog model ID, for example `deepseek-ai/DeepSeek-V4-Flash-0731`,
+and a model supporting tool calling. The same DeepInfra key can be entered for
+both LLM and Qwen embeddings; they remain independently configurable.

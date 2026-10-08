@@ -24,6 +24,9 @@ class Retriever:
             self.settings.knowledge_limit if kind == "knowledge_units" else self.settings.tool_limit
         )
         vector = vector if vector is not None else await self.models.query(query)
+        if kind == "tools" and getattr(self.vectors, "prefix", "").startswith("business_"):
+            catalog = list(await session.scalars(select(Tool).where(Tool.tenant_id.in_(scopes))))
+            await self.vectors.sync_scoped_tools(catalog, self.models)
         dense = await self.vectors.search(kind, vector, tenant, self.settings.candidate_limit)
         base = select(table).where(table.tenant_id.in_(scopes), table.embedding_status == "ready")
         body = table.content if kind == "knowledge_units" else table.description

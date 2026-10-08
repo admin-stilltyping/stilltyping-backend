@@ -13,6 +13,7 @@ from appointments.routes import router as appointments_router
 from crm.routes import router as crm_router
 from custom_fields.routes import router as custom_fields_router
 from dashboard.routes import router as dashboard_router
+from integrations.ai_settings import router as ai_settings_router
 from integrations.gemini import router as gemini_router
 from integrations.routes import router as integrations_router
 from integrations.runtime import BusinessAI
@@ -106,6 +107,7 @@ def create_app(services=None):
     app.include_router(public_chat_router)
     app.include_router(integrations_router)
     app.include_router(gemini_router)
+    app.include_router(ai_settings_router)
     app.include_router(portal_chat_router)
     app.include_router(ai_usage_router)
     app.include_router(portal_webhooks_router)

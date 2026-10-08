@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from context_agent.schemas import DomainError
 from custom_fields.service import Owner
 
-from .models import BusinessGeminiCredential
+from .models import BusinessAISettings, BusinessGeminiCredential
 
 router = APIRouter(prefix="/admin/{slug}/integrations/gemini", tags=["Business integrations"])
 
@@ -67,7 +67,7 @@ class GeminiInput(BaseModel):
 
 
 class GeminiOutput(BaseModel):
-    source: Literal["business", "platform", "unconfigured"]
+    source: Literal["business", "platform", "unconfigured", "super_admin"]
     key_last_four: str | None
     updated_at: datetime | None
     can_update: bool
@@ -129,6 +129,14 @@ async def validate_key(key, settings):
 async def get_gemini(identity: Owner, request: Request):
     services = request.app.state.services
     async with services["db"].transaction() as session:
+        managed = await session.get(BusinessAISettings, identity.business.id)
+        if managed:
+            return GeminiOutput(
+                source="super_admin",
+                key_last_four=None,
+                updated_at=managed.updated_at,
+                can_update=False,
+            )
         row = await session.get(BusinessGeminiCredential, identity.business.id)
         return credential_view(services["settings"], row)
 
@@ -143,6 +151,12 @@ async def save_gemini(payload: GeminiInput, identity: Owner, request: Request):
     # The old key stays intact if validation fails. Runtime resolves it on the
     # next AI operation, so updates work across all Vercel instances immediately.
     async with services["db"].transaction(business.slug) as session:
+        if await session.get(BusinessAISettings, business.id):
+            raise DomainError(
+                409,
+                "ai_managed_by_super_admin",
+                "AI settings are managed by your platform administrator.",
+            )
         row = await session.get(BusinessGeminiCredential, business.id)
         if row is None:
             row = BusinessGeminiCredential(business_id=business.id)
