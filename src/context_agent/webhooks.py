@@ -24,6 +24,7 @@ from sqlalchemy import select
 
 from super_admin.businesses.models import Business
 
+from . import demo_reset
 from .channels import ADAPTERS, ChannelNotConfigured
 from .db import AiUsageRecord, ChannelAccount, WebhookEvent
 from .performance import RequestTiming, current_timing
@@ -104,6 +105,7 @@ async def prepare_webhook(services, channel, tenant, raw, account_ref=""):
                 event_id=key,
                 tenant_id=tenant,
                 external_event_id=message.message_id[:512] or None,
+                external_user_id=message.external_user_id or None,
                 status="ignored" if reason else "received",
                 deliveries=1,
                 created_at=now,
@@ -157,6 +159,55 @@ def generation_error_code(exc):
 
 
 async def process_jobs(services, channel, tenant, config, jobs):
+    if not demo_reset.enabled(services.get("settings"), channel, config):
+        return await _process_jobs(services, channel, tenant, config, jobs)
+    db = services["db"]
+    for job in jobs:
+        event_id, payload, received_at = job
+        started = perf_counter()
+        try:
+            async with demo_reset.sender_lock(db, tenant, payload.external_user_id):
+                if await demo_reset.predates_reset(
+                    db, tenant, payload.external_user_id, received_at
+                ):
+                    await update_event(
+                        db, tenant, event_id, "ignored", started=started,
+                        error_code="demo_reset_superseded",
+                    )
+                elif demo_reset.is_command(payload.message):
+                    await _clear_demo_job(services, tenant, config, event_id, payload, started)
+                else:
+                    await _process_jobs(services, channel, tenant, config, [job])
+        except Exception:
+            log.error("demo_job_failed event=%s", event_id)
+            await update_event(
+                db, tenant, event_id, "failed", started=started, error_code="demo_job_failed"
+            )
+
+
+async def _clear_demo_job(services, tenant, config, event_id, payload, started):
+    db = services["db"]
+    await update_event(db, tenant, event_id, "processing")
+    error_code = None
+    try:
+        await demo_reset.clear_sender(db, tenant, payload.external_user_id)
+        answer = demo_reset.CONFIRMATION
+    except Exception:
+        # The cleanup is one transaction; never acknowledge a partial reset.
+        error_code = "demo_reset_failed"
+        answer = "The demo reset failed or could not be confirmed. Please send /clear again."
+        log.error("demo_reset_failed event=%s", event_id)
+    try:
+        await ADAPTERS["instagram"].send(config, payload.external_user_id, answer)
+    except Exception as exc:
+        error_code = error_code or send_error_code(exc)
+    await update_event(
+        db, tenant, event_id, "failed" if error_code else "processed",
+        started=started, error_code=error_code,
+    )
+
+
+async def _process_jobs(services, channel, tenant, config, jobs):
     adapter = ADAPTERS[channel]
     db, agent = services["db"], services["agent"]
     for event_id, payload, received_at in jobs:

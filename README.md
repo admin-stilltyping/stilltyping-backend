@@ -40,6 +40,36 @@ enquiries and creates customers only when orders or appointments are saved.
 Services, orders, appointments, minimal customer identities and enquiry history
 are persisted per business and connected to the portal.
 
+## Temporary Instagram demo reset
+
+After migration `021`, set server-side `INSTAGRAM_DEMO_CLEAR_ACCOUNTS` to a JSON
+array of explicitly allowed Instagram **business account IDs**, then redeploy.
+The default `[]` disables the feature. For the dental demo account the value is
+`["17841429867666919"]`. Never enable this on an account serving real customers:
+any sender to an enabled demo account can reset their own data.
+
+Send the standalone DM `/clear` (case-insensitive, surrounding whitespace allowed)
+and wait for “Demo reset complete” before starting another scenario. It bypasses
+AI and clears that sender's Instagram conversation/messages, attributable enquiries,
+AI usage rows, support tickets, bot-created appointments and their owner notifications
+and push outbox. It detaches the Instagram identity/source and removes unreferenced
+leads, customers and contacts. Shared customers, other senders/channels, manual orders
+and appointments, business settings, catalogues and knowledge remain. Previously
+delivered push messages and external support webhooks cannot be recalled.
+
+Instagram's visible message history remains unchanged. Minimal webhook delivery
+records and a reset cutoff remain so retries and queued older turns cannot restore
+the cleared state. The command itself and its confirmation are not conversation
+history and use no AI tokens. Clearing local usage rows does not refund provider usage.
+Older records without reliable sender attribution are preserved rather than guessing.
+
+Enabled demo turns are serialized per sender across workers. PostgreSQL holds one
+extra transaction/connection during each enabled demo turn, compatible with the
+Supabase transaction pooler; other accounts use the existing processing path.
+Cleanup commits in one transaction before confirmation. If sending confirmation
+fails, the reset remains committed; send a new `/clear` message to retry safely.
+Disable after the demo by restoring `INSTAGRAM_DEMO_CLEAR_ACCOUNTS=[]` and redeploying.
+
 ## Full local Docker setup
 
 Requires a running Docker engine and Docker Compose. Python/uv do not need to be installed on your host.

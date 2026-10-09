@@ -192,6 +192,7 @@ class WebhookEvent(Base):
     # Old dedup-only rows have no owner and are deliberately excluded from the portal.
     tenant_id: Mapped[str | None] = mapped_column(String(200))
     external_event_id: Mapped[str | None] = mapped_column(String(512))
+    external_user_id: Mapped[str | None] = mapped_column(String(200))
     status: Mapped[str] = mapped_column(String(20), default="legacy", server_default="legacy")
     deliveries: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     last_received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -203,7 +204,17 @@ class WebhookEvent(Base):
     __table_args__ = (
         UniqueConstraint("channel", "event_id"),
         Index("ix_webhook_events_tenant_created", "tenant_id", "created_at", "id"),
+        Index("ix_webhook_events_sender", "tenant_id", "channel", "external_user_id"),
     )
+
+
+class InstagramDemoReset(Base):
+    """Content-free cutoff preventing queued pre-reset demo turns from running."""
+
+    __tablename__ = "instagram_demo_resets"
+    tenant_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    external_user_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    cleared_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class SupportTicket(TimestampMixin, Base):

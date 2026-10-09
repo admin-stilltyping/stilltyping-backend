@@ -33,6 +33,8 @@ class Settings(SuperAdminSettings):
     tool_limit: int = Field(default=5, ge=1, le=20)
     max_tool_rounds: int = Field(default=2, ge=1, le=10)
     history_limit: int = Field(default=10, ge=0, le=100)
+    # Temporary demo command; opt in only specific Instagram business account IDs.
+    instagram_demo_clear_accounts: set[str] = Field(default_factory=set)
     request_timeout: float = Field(default=180, gt=0)
     support_webhook_url: str | None = None
     support_webhook_token: SecretStr | None = None
