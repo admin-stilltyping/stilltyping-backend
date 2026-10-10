@@ -90,8 +90,10 @@ async def support_ticket(args, context):
 
 SUPPORT = ToolDefinition(
     name="create_support_ticket",
-    description="Create a support ticket when supplied knowledge and available tool results cannot "
-    "support an answer to the user's request.",
+    description="Create a support ticket for an unresolved business-related question after "
+    "knowledge lookup, a failed business action, or an explicit request for staff about a "
+    "business matter. Never use for greetings, thanks, missing details that can be clarified, "
+    "or questions unrelated to this business.",
     parameters_schema={
         "type": "object",
         "properties": {"question": {"type": "string"}, "reason": {"type": "string"}},

@@ -150,7 +150,7 @@ Response fields:
 
 - request_id: caller-provided ID.
 - outcome: answered, escalated, or escalation_failed.
-- answer: grounded answer or deterministic escalation message.
+- answer: grounded answer, conversational reply, or deterministic escalation message.
 - tool_results: tool name, call ID and result.
 - response_time_ms: server processing time in milliseconds, rounded to two decimal places. Includes
   request parsing, embeddings, retrieval, model/tool calls and preparing the response; excludes final
@@ -170,7 +170,26 @@ The script preserves deterministic tool IDs, updates PostgreSQL, and embeds new 
 
 ## Support tickets
 
-When the agent cannot ground an answer it escalates by creating a durable ticket in the `support_tickets` table (idempotent on tenant_id + request_id, so a retried request never opens a duplicate). The reply then reports the human-readable reference, e.g. "Support ticket TKT-02E1FA was created." No external service is required. Escalation reports `escalation_failed` if ticket creation fails, including when Support Tickets is disabled for a registered business.
+When the agent cannot ground a business-related answer it escalates by creating a durable ticket in the `support_tickets` table (idempotent on tenant_id + request_id, so a retried request never opens a duplicate). The reply then reports the human-readable reference, e.g. "Support ticket TKT-02E1FA was created." No external service is required. Escalation reports `escalation_failed` if ticket creation fails, including when Support Tickets is disabled for a registered business.
+
+The answer model also decides conversational scope using the tenant's business
+profile, instructions and conversation history. Pure greetings/thanks, requests
+needing clarification, and unrelated questions use the internal `reply_to_customer`
+control to end the turn without evidence or a support ticket. Unrelated requests
+are redirected to the business; short replies, synonyms and transliteration are
+not rejected by a keyword allowlist. This is model-guided routing, not a security
+boundary or a guarantee of intent classification accuracy. The reply control must
+not contain unsupported factual claims or action confirmations.
+
+If a relevant question misses knowledge retrieval, the model can use the internal
+`search_business_knowledge` control once with a standalone query informed by history.
+It searches only the current tenant, under the existing retrieval threshold and
+tool-round budget. Normal FAQs and conversational replies still use one logical
+chat call; the optional search costs one more query embedding/retrieval and a
+follow-up chat call. Internal controls do not execute business actions, are rejected
+when combined with other calls, and are omitted from `tool_results`. Retrieved retry
+context is included in `knowledge_units`. There is no separate classifier call,
+new setting, or database migration.
 
 Staff read and resolve tickets with the owning business-admin JWT and Support
 Tickets enabled through tenant-scoped endpoints:
@@ -207,7 +226,7 @@ uv run alembic upgrade head --sql
 
 Tests use a temporary SQLite database and fake model responses, plus the actual Qdrant local engine. They test contracts, failure behavior, tenant scope, tool registry synchronization, and LangGraph control flow. They do not measure live LLM accuracy or prove PostgreSQL concurrency behavior.
 
-Production evaluation should measure retrieval recall, factual support, tool choice, incorrect escalation, missed escalation, and latency using representative customer questions. Include ambiguous updates, conflicting policies, exact identifiers, multilingual input, tool failures, and instructions embedded in retrieved data. The answer model must use supplied evidence or request support. Code rejects empty answers or answers with no retrieved knowledge/successful tool evidence, but cannot verify individual factual claims.
+Production evaluation should measure retrieval recall, factual support, tool choice, incorrect escalation, missed escalation, and latency using representative customer questions. Include ambiguous updates, conflicting policies, exact identifiers, multilingual input, tool failures, and instructions embedded in retrieved data. For factual answers, the model must use supplied evidence or request support. Code rejects empty answers or plain answers with no retrieved knowledge/successful tool evidence. The narrowly scoped conversation reply control is exempt; selection of that control and individual factual claims still rely on the model following instructions.
 
 ## References
 
