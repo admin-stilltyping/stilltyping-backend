@@ -352,6 +352,12 @@ def test_migration_preserves_old_dedup_rows_and_matches_metadata():
     )
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
+    reset_spec = importlib.util.spec_from_file_location(
+        "webhook_reset_migration",
+        Path(__file__).parents[1] / "migrations/versions/021_instagram_demo_reset.py",
+    )
+    reset_migration = importlib.util.module_from_spec(reset_spec)
+    reset_spec.loader.exec_module(reset_migration)
     engine = create_engine("sqlite:///:memory:")
     try:
         with engine.begin() as connection:
@@ -367,6 +373,7 @@ def test_migration_preserves_old_dedup_rows_and_matches_metadata():
             )
             with Operations.context(MigrationContext.configure(connection)):
                 migration.upgrade()
+                reset_migration.upgrade()
                 assert {
                     column["name"] for column in inspect(connection).get_columns("webhook_events")
                 } == set(WebhookEvent.__table__.columns.keys())
@@ -374,6 +381,7 @@ def test_migration_preserves_old_dedup_rows_and_matches_metadata():
                     text("SELECT tenant_id, status, deliveries FROM webhook_events")
                 ).one()
                 assert tuple(old) == (None, "legacy", 1)
+                reset_migration.downgrade()
                 migration.downgrade()
                 assert (
                     connection.execute(text("SELECT event_id FROM webhook_events")).scalar_one()
