@@ -46,7 +46,7 @@ responses explicitly identify `mode: "demo"`.
 
 ## Frontend and local setup
 
-The frontend is in `nivaso-frontend/web/src/features/dashboard/`, mounted at
+The frontend is in `stilltyping-frontend/web/src/features/dashboard/`, mounted at
 `/dashboard` and used as the business-admin landing page. It has regeneration,
 customization, period filters, accessible chart data tables, and mobile navigation.
 API failures show errors and retry controls instead of fabricated fallback data.

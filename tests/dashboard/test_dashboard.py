@@ -206,7 +206,7 @@ def test_random_selection_has_ten_unique_widgets_with_balanced_types():
 
 
 def test_business_use_case_inference_has_a_generic_fallback():
-    assert infer_use_case("Nivaso Dental", None) == "clinic"
+    assert infer_use_case("Stilltyping Dental", None) == "clinic"
     assert infer_use_case("Gift Store", None) == "retail"
     assert infer_use_case("Consulting Services", None) == "services"
     assert infer_use_case("Acme", None) == "support"

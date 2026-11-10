@@ -89,7 +89,7 @@ def public_key(settings):
 
 async def queue_notification(session, business_id, kind, source_id, url):
     title, message = KINDS[kind]
-    notification_id = uuid5(NAMESPACE_URL, f"nivaso:notify:{business_id}:{kind}:{source_id}")
+    notification_id = uuid5(NAMESPACE_URL, f"stilltyping:notify:{business_id}:{kind}:{source_id}")
     session.add(
         Notification(
             id=notification_id,

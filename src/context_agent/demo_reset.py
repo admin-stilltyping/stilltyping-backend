@@ -249,7 +249,7 @@ async def clear_sender(db, tenant, sender):
             customer_ids = {row.customer_id for row in appointments}
             lead_ids.update(row.lead_id for row in appointments if row.lead_id)
             notification_ids = {
-                uuid5(NAMESPACE_URL, f"nivaso:notify:{business_id}:{kind}:{row.id}")
+                uuid5(NAMESPACE_URL, f"stilltyping:notify:{business_id}:{kind}:{row.id}")
                 for kind, rows in (("support_ticket", tickets), ("appointment", appointments))
                 for row in rows
             }
